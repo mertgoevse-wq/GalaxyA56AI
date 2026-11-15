@@ -30,7 +30,7 @@ einer Oberfläche im Stil von ChatGPT/Claude.
 | Lokale Video-/Musikgenerierung | ❌ offen | Katalog + Download vorhanden, Runtime fehlt |
 | Cloud-Chat + Cloud-Bild | ✅ implementiert | Gemini API-Key (`gemini-2.5-flash`, `-pro`, `gemini-2.5-flash-image`) |
 
-Der APK-Build selbst wurde verifiziert (58 MB, `libgalaxya56.so` 7 MB, 9 JNI-Exporte,
+Der APK-Build selbst wurde verifiziert (rund 60 MB, `libgalaxya56.so` 7 MB, 9 JNI-Exporte,
 `libc++_shared.so` korrekt gebunden). **Auf einem physischen Gerät wurde nicht getestet**,
 weil beim Build kein Gerät per `adb` verbunden war.
 
