@@ -1,0 +1,91 @@
+<resources>
+    <string name="app_name">Galaxy A56 AI</string>
+    <string name="app_name_short">A56 AI</string>
+
+    <!-- Hardware -->
+    <string name="hardware_info">Hardware Information</string>
+    <string name="device_model">Device Model</string>
+    <string name="soc_model">SoC</string>
+    <string name="cpu_info">CPU</string>
+    <string name="gpu_info">GPU</string>
+    <string name="npu_info">NPU</string>
+    <string name="ram_info">RAM</string>
+    <string name="thermal_info">Thermal</string>
+    <string name="npu_available">NPU Available</string>
+    <string name="npu_not_available">NPU Not Available</string>
+    <string name="throttling_warning">Device is throttling - performance reduced</string>
+
+    <!-- Models -->
+    <string name="models">Models</string>
+    <string name="download_model">Download Model</string>
+    <string name="delete_model">Delete Model</string>
+    <string name="model_loaded">Model Loaded</string>
+    <string name="model_not_loaded">Model Not Loaded</string>
+    <string name="loading_model">Loading model…</string>
+    <string name="downloading_model">Downloading model…</string>
+    <string name="download_complete">Download complete</string>
+    <string name="download_failed">Download failed</string>
+    <string name="no_models">No models downloaded</string>
+    <string name="tap_to_download">Tap to download models</string>
+
+    <!-- Chat -->
+    <string name="chat">Chat</string>
+    <string name="new_chat">New Chat</string>
+    <string name="type_message">Type a message…</string>
+    <string name="send">Send</string>
+    <string name="thinking">Thinking…</string>
+    <string name="select_model">Select a model</string>
+
+    <!-- Benchmark -->
+    <string name="benchmark">Benchmark</string>
+    <string name="run_benchmark">Run Benchmark</string>
+    <string name="tokens_per_sec">tokens/sec</string>
+    <string name="prompt_eval_time">Prompt eval time</string>
+    <string name="eval_time">Generation time</string>
+    <string name="memory_usage">Memory usage</string>
+    <string name="power_consumption">Power consumption</string>
+
+    <!-- Settings -->
+    <string name="settings">Settings</string>
+    <string name="preferred_backend">Preferred Backend</string>
+    <string name="backend_auto">Auto (Best Available)</string>
+    <string name="backend_npu">NPU (Samsung)</string>
+    <string name="backend_gpu">GPU (Vulkan)</string>
+    <string name="backend_cpu">CPU (llama.cpp)</string>
+    <string name="quantization">Default Quantization</string>
+    <string name="context_size">Context Size</string>
+    <string name="temperature">Temperature</string>
+    <string name="top_p">Top P</string>
+    <string name="top_k">Top K</string>
+    <string name="enable_nsfw">Enable NSFW Content</string>
+    <string name="enable_nsfw_desc">Allow downloading and running NSFW models (requires confirmation)</string>
+    <string name="theme">Theme</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_system">System</string>
+
+    <!-- Model Types -->
+    <string name="model_type_llm">LLM (Text Generation)</string>
+    <string name="model_type_embedding">Embedding</string>
+    <string name="model_type_image_gen">Image Generation</string>
+    <string name="model_type_image_class">Image Classification</string>
+    <string name="model_type_audio">Audio</string>
+    <string name="model_type_multimodal">Multimodal</string>
+
+    <!-- Quantization -->
+    <string name="quant_q4_k_m">Q4_K_M (Recommended)</string>
+    <string name="quant_q4_k_s">Q4_K_S (Smaller)</string>
+    <string name="quant_q5_k_m">Q5_K_M (Better Quality)</string>
+    <string name="quant_q6_k">Q6_K (High Quality)</string>
+    <string name="quant_q8_0">Q8_0 (Near Original)</string>
+    <string name="quant_fp16">FP16 (GPU/NPU)</string>
+    <string name="quant_fp32">FP32 (Full Precision)</string>
+
+    <!-- Errors -->
+    <string name="error_generic">An error occurred</string>
+    <string name="error_no_model">No model loaded</string>
+    <string name="error_no_internet">No internet connection</string>
+    <string name="error_storage_full">Storage full</string>
+    <string name="error_model_invalid">Invalid model file</string>
+    <string name="error_backend_unavailable">Selected backend not available</string>
+</resources>

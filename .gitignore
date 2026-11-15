@@ -1,0 +1,113 @@
+# Gradle
+.gradle/
+build/
+*/build/
+!src/main/**/build.gradle.kts
+!src/main/**/CMakeLists.txt
+
+# Local configuration
+local.properties
+*.iml
+.idea/
+*.iws
+*.ipr
+*.iml
+
+# Android
+*.apk
+*.ap_
+*.aab
+output/
+captures/
+
+# Generated files
+*.class
+*.dex
+*.oat
+*.jar
+*.so
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Cache
+.cache/
+*.tmp
+
+# Build outputs
+*.apk
+*.aab
+*.ap_
+
+# Test outputs
+test-results/
+*.ec
+
+# Kotlin
+*.kt.metadata
+
+# Serialization
+*.proto
+
+# Environment
+.env
+*.local.properties
+
+# NDK
+*.so
+obj/
+
+# LLVM/Clang
+*.bc
+*.ll
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Temporary files
+*.orig
+*.rej
+*~
+
+# JavaScript dependencies and agent workspaces
+node_modules/
+.worktrees/
+.superpowers/
+
+# Local model artifacts
+*.gguf
+*.safetensors
+*.onnx
+*.tflite
+*.ckpt
+*.bin
+*.partial
+
+# Signing material and credentials
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+.env.*
+!.env.example
+.freebuff/
+
+.cxx/
+
+app/.cxx/
+
+dist/
