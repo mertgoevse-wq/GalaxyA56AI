@@ -41,7 +41,7 @@ object LocalInference {
     }
 
     external fun nativeHardwareJson(): String
-    external fun nativeLoadModel(path: String, nCtx: Int, nThreads: Int): String
+    external fun nativeLoadModel(path: String, nCtx: Int, nThreads: Int, gpuLayers: Int): String
     external fun nativeUnload(): String
     external fun nativeModelInfo(): String
     external fun nativeApplyLora(path: String, scale: Float): String
@@ -57,8 +57,15 @@ object LocalInference {
     ): String
     external fun nativeStop()
     external fun nativeBackend(): String
+    external fun nativeNnapiProbe(): String
 
     fun hardware(): HardwareInfo = HardwareInfo.parse(nativeHardwareJson())
+
+    fun nnapiProbe(): String = try {
+        nativeNnapiProbe()
+    } catch (t: Throwable) {
+        """{"ok":false,"error":"${t.message ?: "NNAPI-Probe nicht verfügbar"}"}"""
+    }
 
     fun backendName(): String = try {
         nativeBackend()
@@ -66,8 +73,8 @@ object LocalInference {
         "native unavailable"
     }
 
-    fun load(path: String, contextSize: Int, threads: Int): LoadResult {
-        val json = nativeLoadModel(path, contextSize, threads)
+    fun load(path: String, contextSize: Int, threads: Int, gpuLayers: Int = 0): LoadResult {
+        val json = nativeLoadModel(path, contextSize, threads, gpuLayers)
         val o = JSONObject(json)
         return LoadResult(
             ok = o.optBoolean("ok"),

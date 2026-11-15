@@ -259,7 +259,7 @@ class ModelStore(
                     val tags = o.optJSONArray("tags")?.let { arr ->
                         (0 until arr.length()).map { arr.optString(it) }
                     } ?: emptyList()
-                    // "abliterated"/"uncensored" are not sexual per se — keep them visible without the 18+ gate.
+                    // "abliterated"/"uncensored" are not sexual per se â€” keep them visible without the 18+ gate.
                     val nsfw = tags.any { it.contains("nsfw", true) || it.contains("not-for-all-audiences", true) } ||
                         id.contains("nsfw", true)
                     RemoteModel(

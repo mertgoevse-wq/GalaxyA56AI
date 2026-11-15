@@ -28,7 +28,7 @@ class LlamaEngine {
 public:
     static LlamaEngine& instance();
 
-    std::string loadModel(const std::string& path, int nCtx, int nThreads);
+    std::string loadModel(const std::string& path, int nCtx, int nThreads, int gpuLayers);
     std::string unload();
     bool isLoaded();
     std::string infoJson();

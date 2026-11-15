@@ -111,3 +111,6 @@ node_modules/
 app/.cxx/
 
 dist/
+
+.tools/
+.models/

@@ -1,4 +1,5 @@
 #include "llama_engine.h"
+#include "ggml-backend.h"
 
 #include "llama.h"
 
@@ -140,7 +141,7 @@ LlamaEngine& LlamaEngine::instance() {
     return engine;
 }
 
-std::string LlamaEngine::loadModel(const std::string& path, int nCtx, int nThreads) {
+std::string LlamaEngine::loadModel(const std::string& path, int nCtx, int nThreads, int gpuLayers) {
     std::lock_guard<std::mutex> lock(g.mutex);
     unloadLocked();
 
@@ -148,14 +149,29 @@ std::string LlamaEngine::loadModel(const std::string& path, int nCtx, int nThrea
         return R"json({"ok":false,"error":"Modelldatei nicht gefunden"})json";
     }
 
+    int gpuDevices = 0;
+    std::string gpuDeviceName;
     static std::once_flag once;
-    std::call_once(once, [] {
+    std::call_once(once, [&] {
         llama_log_set(logCallback, nullptr);
         llama_backend_init();
+        const size_t devCount = ggml_backend_dev_count();
+        for (size_t i = 0; i < devCount; ++i) {
+            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+            if (!dev) continue;
+            if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                ++gpuDevices;
+                if (gpuDeviceName.empty()) {
+                    const char* desc = ggml_backend_dev_description(dev);
+                    gpuDeviceName = desc ? desc : "GPU";
+                }
+            }
+        }
+        LOGI("Backend devices: %zu, GPU: %d (%s)", devCount, gpuDevices, gpuDeviceName.c_str());
     });
 
     llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 0; // Vulkan backend is not compiled in; CPU (NEON) is used.
+    mparams.n_gpu_layers = gpuLayers;
     mparams.use_mmap = true;
     mparams.use_mlock = false;
 
@@ -174,6 +190,21 @@ std::string LlamaEngine::loadModel(const std::string& path, int nCtx, int nThrea
     cparams.n_threads_batch = std::max(1, nThreads);
 
     g.ctx = llama_init_from_model(g.model, cparams);
+    std::string backend = gpuLayers > 0
+        ? (gpuDevices > 0 ? "CPU+Vulkan " + gpuDeviceName : "CPU (kein Vulkan-Geraet)")
+        : "CPU (NEON)";
+    if (!g.ctx && gpuLayers > 0) {
+        // GPU init can fail (driver, VRAM, unsupported op): fall back to CPU only.
+        llama_model_free(g.model);
+        g.model = nullptr;
+        mparams.n_gpu_layers = 0;
+        g.model = llama_model_load_from_file(path.c_str(), mparams);
+        if (g.model) {
+            g.vocab = llama_model_get_vocab(g.model);
+            g.ctx = llama_init_from_model(g.model, cparams);
+            backend = "CPU (Vulkan-Init fehlgeschlagen)";
+        }
+    }
     if (!g.ctx) {
         unloadLocked();
         return R"json({"ok":false,"error":"Kontext konnte nicht erstellt werden (zu wenig RAM?)"})json";
@@ -191,7 +222,10 @@ std::string LlamaEngine::loadModel(const std::string& path, int nCtx, int nThrea
          << ",\"sizeBytes\":" << llama_model_size(g.model)
          << ",\"context\":" << g.nCtx
          << ",\"threads\":" << g.nThreads
-         << ",\"backend\":\"CPU (NEON)\""
+         << ",\"backend\":\"" << jsonEscape(backend) << "\""
+         << ",\"gpuLayers\":" << gpuLayers
+         << ",\"gpuDevices\":" << gpuDevices
+         << ",\"gpuDevice\":\"" << jsonEscape(gpuDeviceName) << "\""
          << ",\"layers\":" << llama_model_n_layer(g.model) << "}";
     LOGI("Model loaded: %s", g.description.c_str());
     return json.str();

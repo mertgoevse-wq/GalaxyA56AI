@@ -6,6 +6,7 @@
 
 #include "hardware_detector.h"
 #include "llama_engine.h"
+#include "npu_probe.h"
 
 #define LOG_TAG "A56AI-JNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -58,11 +59,11 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeHardwareJson(JNIEnv* env, j
 
 JNIEXPORT jstring JNICALL
 Java_com_galaxya56_ai_inference_LocalInference_nativeLoadModel(
-        JNIEnv* env, jobject, jstring path, jint nCtx, jint nThreads) {
+        JNIEnv* env, jobject, jstring path, jint nCtx, jint nThreads, jint gpuLayers) {
     const std::string modelPath = jstringToString(env, path);
-    LOGI("Loading %s (ctx=%d threads=%d)", modelPath.c_str(), nCtx, nThreads);
+    LOGI("Loading %s (ctx=%d threads=%d gpuLayers=%d)", modelPath.c_str(), nCtx, nThreads, gpuLayers);
     return stringToJstring(env,
-        galaxya56::LlamaEngine::instance().loadModel(modelPath, nCtx, nThreads));
+        galaxya56::LlamaEngine::instance().loadModel(modelPath, nCtx, nThreads, gpuLayers));
 }
 
 JNIEXPORT jstring JNICALL
@@ -140,7 +141,18 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeStop(JNIEnv*, jobject) {
 
 JNIEXPORT jstring JNICALL
 Java_com_galaxya56_ai_inference_LocalInference_nativeBackend(JNIEnv* env, jobject) {
+#ifdef GALAXYA56_HAS_VULKAN
+    return stringToJstring(env, "llama.cpp b6390 · CPU/NEON + Vulkan (ARM64)");
+#else
     return stringToJstring(env, "llama.cpp b6390 (CPU/NEON, ARM64)");
+#endif
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeNnapiProbe(JNIEnv* env, jobject) {
+    const std::string json = galaxya56::nnapiProbeJson();
+    LOGI("NNAPI probe: %s", json.c_str());
+    return stringToJstring(env, json);
 }
 
 } // extern "C"

@@ -97,7 +97,7 @@ CpuStats detectCpu() {
 
     // ARM MIDR part numbers for big/medium vs little cores.
     const std::vector<std::string> big = {"0xd0b", "0xd0d", "0xd4b", "0xd4d", "0xd4e", "0xd47",
-                                          "0xd81", "0xd82", "0xd80", "0xd85", "0xd87"};
+                                          "0xd81", "0xd82", "0xd85", "0xd87"};
     for (auto& entry : parts) {
         bool isBig = std::find(big.begin(), big.end(), entry.first) != big.end();
         if (isBig) s.perf += entry.second;
@@ -237,7 +237,7 @@ NpuStats detectNpu() {
                 if (getType) {
                     int32_t type = 0;
                     if (getType(dev, &type) == 0) {
-                        name += type == 3 ? " [accelerator]" : (type == 2 ? " [gpu]" : " [cpu]");
+                        name += type == 4 ? " [accelerator]" : (type == 3 ? " [gpu]" : (type == 2 ? " [cpu]" : " [other]"));
                     }
                 }
                 if (!n.names.empty()) n.names += ", ";

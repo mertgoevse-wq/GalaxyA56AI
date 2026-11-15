@@ -40,8 +40,12 @@ data class HardwareInfo(
 
     val npuSummary: String
         get() = if (npu) {
-            val tops = if (npuTopsInt8 > 0) " · ~$npuTopsInt8 TOPS INT8" else ""
-            "Verfügbar$tops"
+            val tops = if (npuTopsInt8 > 0) "~$npuTopsInt8 TOPS INT8 (HW)" else "NPU (HW)"
+            if (npuNames.contains("accelerator", ignoreCase = true)) {
+                "$tops · NNAPI-Accelerator verfügbar"
+            } else {
+                "$tops · NNAPI: ${npuNames.ifBlank { "nur Referenz-Treiber" }}"
+            }
         } else "Nicht erkannt"
 
     val thermalWarning: Boolean get() = throttleC > 0 && thermalC >= throttleC * 0.9f

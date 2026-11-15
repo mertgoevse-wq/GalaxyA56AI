@@ -84,6 +84,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _loadedModel = MutableStateFlow<String?>(null)
     val loadedModel: StateFlow<String?> = _loadedModel
 
+    private val _npuProbe = MutableStateFlow<String?>(null)
+    val npuProbe: StateFlow<String?> = _npuProbe
+
+    private val _npuProbeBusy = MutableStateFlow(false)
+    val npuProbeBusy: StateFlow<Boolean> = _npuProbeBusy
+
     private val _remote = MutableStateFlow(RemoteSearchState())
     val remote: StateFlow<RemoteSearchState> = _remote
 
@@ -103,6 +109,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val studioError: StateFlow<String?> = _studioError
 
     private var loadedPath: String = ""
+    private var loadedBackend: String = "CPU"
 
     init {
         loadConversations()
@@ -123,6 +130,38 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // ------------------------------------------------------------------ settings
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsStore.update(transform)
+
+    fun runNnapiProbe() {
+        if (_npuProbeBusy.value) return
+        _npuProbeBusy.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = LocalInference.nnapiProbe()
+            val pretty = runCatching {
+                val o = JSONObject(result)
+                buildString {
+                    appendLine(if (o.optBoolean("ok")) "Ausfuehrung: OK" else "Fehler: ${o.optString("error")}")
+                    appendLine("Gewaehlt: ${o.optString("chosen")} (${o.optString("chosenType")})")
+                    appendLine("Latenz: ${"%.2f".format(o.optDouble("latencyMs"))} ms")
+                    val out = o.optJSONArray("output")
+                    if (out != null) {
+                        val values = (0 until out.length()).joinToString(", ") { "%.0f".format(out.optDouble(it)) }
+                        appendLine("Ausgabe: " + values + if (o.optBoolean("correct")) "  [korrekt]" else "  [falsch]")
+                    }
+                    val devs = o.optJSONArray("devices")
+                    if (devs != null && devs.length() > 0) {
+                        appendLine()
+                        appendLine("NNAPI-Geraete:")
+                        for (i in 0 until devs.length()) {
+                            val d = devs.getJSONObject(i)
+                            appendLine("- ${d.optString("name")} - ${d.optString("type")} - FL ${d.optInt("featureLevel")}")
+                        }
+                    }
+                }
+            }.getOrDefault(result)
+            _npuProbe.value = pretty
+            _npuProbeBusy.value = false
+        }
+    }
 
     fun enableAdultContent(confirmed: Boolean) {
         updateSettings { it.copy(adultConfirmed = confirmed, nsfwEnabled = confirmed) }
@@ -245,7 +284,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val threads = s.threads.coerceIn(1, (_hardware.value.cpuCores.takeIf { c -> c > 0 } ?: 4))
         if (loadedPath != path) {
             _status.value = "Lade Modell …"
-            val result = withContext(Dispatchers.IO) { LocalInference.load(path, s.contextSize, threads) }
+            val result = withContext(Dispatchers.IO) { LocalInference.load(path, s.contextSize, threads, s.gpuLayers) }
             if (!result.ok) {
                 updateMessage(conversationId, messageId) {
                     it.copy(text = "Modell konnte nicht geladen werden: ${result.error}", error = true)
@@ -253,12 +292,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
             loadedPath = path
+            loadedBackend = result.backend
             _loadedModel.value = result.description
             _status.value = "Modell geladen · ${result.context} Tokens Kontext"
         }
 
         val prompt = PromptBuilder.build(s.systemPrompt, conversationHistory(conversationId, messageId), path)
-        _status.value = "Generiere lokal (CPU/NEON) …"
+        _status.value = "Generiere lokal ($loadedBackend) …"
 
         val started = System.currentTimeMillis()
         val result = withContext(Dispatchers.IO) {
@@ -281,7 +321,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             append("%.1f tok/s".format(result.tokensPerSecond))
             append(" · ${result.promptMs} ms Prompt")
             append(" · ${wall / 1000.0}s gesamt")
-            append(" · CPU/NEON")
+            append(" · $loadedBackend")
         }
 
         updateMessage(conversationId, messageId) {
@@ -354,7 +394,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val s = settings.value
             _status.value = "Lade Modell …"
             val result = withContext(Dispatchers.IO) {
-                LocalInference.load(path, s.contextSize, s.threads)
+                LocalInference.load(path, s.contextSize, s.threads, s.gpuLayers)
             }
             if (result.ok) {
                 loadedPath = path
@@ -375,7 +415,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val s = settings.value
             if (loadedPath.isBlank()) {
                 val path = resolveModelPath(s)
-                val load = withContext(Dispatchers.IO) { LocalInference.load(path, s.contextSize, s.threads) }
+                val load = withContext(Dispatchers.IO) { LocalInference.load(path, s.contextSize, s.threads, s.gpuLayers) }
                 if (!load.ok) {
                     _status.value = "Erst Modell laden: ${load.error}"
                     return@launch

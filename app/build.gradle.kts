@@ -23,7 +23,15 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++17", "-fexceptions", "-frtti")
-                arguments += listOf("-DANDROID_STL=c++_shared")
+                val vulkan = (project.findProperty("vulkan") as String?)?.toBoolean() ?: false
+                arguments += listOf("-DANDROID_STL=c++_shared", "-DGALAXYA56_VULKAN=$vulkan")
+                val hostBin = rootProject.file(".tools/hostbin")
+                if (vulkan && hostBin.resolve("clang.exe").exists()) {
+                    arguments += listOf(
+                        "-DHOST_C_COMPILER=${hostBin.resolve("clang.exe").absolutePath}",
+                        "-DHOST_CXX_COMPILER=${hostBin.resolve("clang++.exe").absolutePath}"
+                    )
+                }
             }
         }
 

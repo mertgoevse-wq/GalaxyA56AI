@@ -24,7 +24,8 @@ data class AppSettings(
     val adultConfirmed: Boolean = false,
     val selectedModelPath: String = "",
     val loraScale: Float = 0.8f,
-    val maxTokens: Int = 512
+    val maxTokens: Int = 512,
+    val gpuLayers: Int = 0
 ) {
     val systemPrompt: String
         get() = if (customSystemPrompt.isNotBlank()) customSystemPrompt
@@ -62,7 +63,8 @@ class SettingsStore(context: Context) {
         adultConfirmed = prefs.getBoolean("adultConfirmed", false),
         selectedModelPath = prefs.getString("selectedModelPath", "") ?: "",
         loraScale = prefs.getFloat("loraScale", 0.8f),
-        maxTokens = prefs.getInt("maxTokens", 512)
+        maxTokens = prefs.getInt("maxTokens", 512),
+        gpuLayers = prefs.getInt("gpuLayers", 0)
     )
 
     fun update(transform: (AppSettings) -> AppSettings) {
@@ -88,6 +90,7 @@ class SettingsStore(context: Context) {
             putString("selectedModelPath", next.selectedModelPath)
             putFloat("loraScale", next.loraScale)
             putInt("maxTokens", next.maxTokens)
+            putInt("gpuLayers", next.gpuLayers)
         }.apply()
     }
 }

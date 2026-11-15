@@ -47,6 +47,8 @@ fun SettingsScreen(viewModel: AppViewModel) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val hardware by viewModel.hardware.collectAsStateWithLifecycle()
     val installed by viewModel.installed.collectAsStateWithLifecycle()
+    val npuProbe by viewModel.npuProbe.collectAsStateWithLifecycle()
+    val npuProbeBusy by viewModel.npuProbeBusy.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var customPrompt by rememberSaveable(settings.customSystemPrompt) { mutableStateOf(settings.customSystemPrompt) }
@@ -70,7 +72,9 @@ fun SettingsScreen(viewModel: AppViewModel) {
             LabelledValue("RAM", "${hardware.ramAvailMb} / ${hardware.ramTotalMb} MB frei")
             LabelledValue(
                 "Thermik",
-                "${"%.1f".format(hardware.thermalC)} °C / Throttle ${"%.0f".format(hardware.throttleC)} °C",
+                if (hardware.thermalC > 0f)
+                    "${"%.1f".format(hardware.thermalC)} °C / Throttle ${"%.0f".format(hardware.throttleC)} °C"
+                else "Sensor auf Android 17 nicht lesbar (SELinux)",
                 hardware.thermalWarning
             )
             LabelledValue("Runtime", LocalInference.backendName())
@@ -95,12 +99,33 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 }
             }
             Text(
-                "Politik: NPU → GPU → CPU. llama.cpp-GGUF läuft in diesem Build auf CPU/NEON; " +
-                    "NPU und GPU werden erkannt und für Diffusion-/Audio-Runtimes priorisiert, sobald diese aktiv sind.",
+                "llama.cpp-GGUF läuft auf CPU/NEON; mit -Pvulkan=true gebaute APKs offloaden Layer " +
+                    "auf die Xclipse-GPU (GPU-Layer-Regler). Die NPU wird über NNAPI angesprochen; " +
+                    "GGUF-Transformer selbst laufen nicht auf NNAPI.",
                 style = MaterialTheme.typography.labelSmall,
                 color = TextMuted,
                 modifier = Modifier.padding(top = 6.dp)
             )
+            Button(
+                onClick = { viewModel.runNnapiProbe() },
+                enabled = !npuProbeBusy,
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                Text(if (npuProbeBusy) "NNAPI-Test läuft …" else "NNAPI/NPU-Test ausführen")
+            }
+            npuProbe?.let { report ->
+                Surface(
+                    color = Surface2,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                ) {
+                    Text(
+                        report,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
         }
 
         SettingsCard("Generierung") {
@@ -119,6 +144,14 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 range = 1f..(hardware.cpuCores.coerceAtLeast(4).toFloat()),
                 steps = 6,
                 onChange = { viewModel.updateSettings { s -> s.copy(threads = it.toInt().coerceAtLeast(1)) } }
+            )
+            SliderRow(
+                label = "GPU-Layer (Vulkan)",
+                value = settings.gpuLayers.toFloat(),
+                valueText = if (settings.gpuLayers == 0) "0 · CPU" else "${settings.gpuLayers} · CPU+GPU",
+                range = 0f..99f,
+                steps = 0,
+                onChange = { viewModel.updateSettings { s -> s.copy(gpuLayers = it.toInt()) } }
             )
             SliderRow(
                 label = "Temperatur",
