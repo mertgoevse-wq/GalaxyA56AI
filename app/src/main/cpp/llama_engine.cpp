@@ -275,13 +275,21 @@ GenResult LlamaEngine::generate(const std::string& prompt, const GenParams& para
     if (maxNew <= 0 || maxNew > nCtx) maxNew = std::max(16, nCtx / 2);
     const int maxPrompt = std::max(16, nCtx - maxNew - 8);
 
+    // Chat templates already carry their control tokens; adding BOS again would
+    // duplicate it (Llama 3 / Gemma). Raw prompts still get BOS.
+    const bool templatePrompt = prompt.rfind("<|", 0) == 0 ||
+                                prompt.rfind("<start_of_turn>", 0) == 0 ||
+                                prompt.rfind("<bos>", 0) == 0 ||
+                                prompt.rfind("[INST]", 0) == 0;
+    const bool addSpecial = !templatePrompt;
+
     std::vector<llama_token> tokens(prompt.size() + 16);
     int32_t n = llama_tokenize(g.vocab, prompt.c_str(), static_cast<int32_t>(prompt.size()),
-                               tokens.data(), static_cast<int32_t>(tokens.size()), true, true);
+                               tokens.data(), static_cast<int32_t>(tokens.size()), addSpecial, true);
     if (n < 0) {
         tokens.resize(-n);
         n = llama_tokenize(g.vocab, prompt.c_str(), static_cast<int32_t>(prompt.size()),
-                           tokens.data(), static_cast<int32_t>(tokens.size()), true, true);
+                           tokens.data(), static_cast<int32_t>(tokens.size()), addSpecial, true);
     }
     if (n <= 0) {
         result.error = "Prompt konnte nicht tokenisiert werden";

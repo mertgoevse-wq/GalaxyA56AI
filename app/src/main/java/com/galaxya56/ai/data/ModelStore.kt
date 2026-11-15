@@ -319,7 +319,7 @@ class ModelStore(
                 .addQueryParameter("limit", "24")
                 .addQueryParameter("types", "Checkpoint,LORA")
                 .addQueryParameter("sort", "Most Downloaded")
-                .addQueryParameter("nsfw", "true")
+                .addQueryParameter("nsfw", if (allowNsfw) "true" else "false")
                 .build()
 
             val request = Request.Builder().url(url)
