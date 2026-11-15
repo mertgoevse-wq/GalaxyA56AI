@@ -21,9 +21,11 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -48,20 +50,26 @@ import com.galaxya56.ai.data.Catalog
 import com.galaxya56.ai.data.ModelEntry
 import com.galaxya56.ai.data.ModelType
 import com.galaxya56.ai.ui.theme.Accent
+import com.galaxya56.ai.ui.theme.AccentSoft
+import com.galaxya56.ai.ui.theme.Surface1
 import com.galaxya56.ai.ui.theme.Surface2
 import com.galaxya56.ai.ui.theme.TextMuted
 import java.io.File
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudioScreen(viewModel: AppViewModel) {
     var mode by rememberSaveable { mutableStateOf(ModelType.IMAGE) }
     var prompt by rememberSaveable { mutableStateOf("") }
     var negative by rememberSaveable { mutableStateOf("") }
+    var showImageModels by remember { mutableStateOf(false) }
 
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val installed by viewModel.installed.collectAsStateWithLifecycle()
     val busy by viewModel.studioBusy.collectAsStateWithLifecycle()
     val error by viewModel.studioError.collectAsStateWithLifecycle()
     val image by viewModel.studioImage.collectAsStateWithLifecycle()
+    val localImageModel by viewModel.localImageModel.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
@@ -94,7 +102,7 @@ fun StudioScreen(viewModel: AppViewModel) {
         )
         Text(
             when (mode) {
-                ModelType.IMAGE -> "Text → Bild. Cloud läuft sofort mit API-Key; lokale SD1.5-Unterstützung ist vorbereitet, aber in diesem Build noch nicht aktiv."
+                ModelType.IMAGE -> "Text → Bild. Lokal über stable-diffusion.cpp (SD1.5, Vulkan/CPU) oder optional Cloud mit Gemini-Key."
                 ModelType.VIDEO -> "Text/Bild → Clip. Auf dem A56 sinnvoll: AnimateDiff (SD1.5, 16 Frames). Runtime folgt."
                 else -> "Text → Musik, TTS und ASR. Kleinste Kandidaten: MusicGen Small, Stable Audio Open Small, Whisper."
             },
@@ -102,6 +110,28 @@ fun StudioScreen(viewModel: AppViewModel) {
             color = TextMuted,
             modifier = Modifier.padding(top = 4.dp)
         )
+
+        if (mode == ModelType.IMAGE) {
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = { showImageModels = true }) {
+                    Text(
+                        "Modell: " + (settings.imageModelPath.substringAfterLast('/').ifBlank { "Auto (SD1.5)" })
+                            .take(26),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                Pill(
+                    "VAE-Tiling ${if (settings.imageVaeTiling) "an" else "aus"}",
+                    if (settings.imageVaeTiling) AccentSoft else Surface2,
+                    if (settings.imageVaeTiling) Accent else TextMuted
+                ) {
+                    viewModel.updateSettings { it.copy(imageVaeTiling = !it.imageVaeTiling) }
+                }
+                Pill("CFG ${"%.1f".format(settings.imageCfg)}", Surface2)
+                Pill("${settings.imageSteps} Steps", Surface2)
+            }
+        }
 
         Spacer(Modifier.height(14.dp))
         OutlinedTextField(
@@ -134,9 +164,9 @@ fun StudioScreen(viewModel: AppViewModel) {
         }
 
         Spacer(Modifier.height(10.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
-                onClick = { viewModel.generateImage(prompt, negative) },
+                onClick = { viewModel.generateLocalImage(prompt, negative) },
                 enabled = prompt.isNotBlank() && !busy && mode == ModelType.IMAGE,
                 modifier = Modifier.weight(1f)
             ) {
@@ -144,8 +174,26 @@ fun StudioScreen(viewModel: AppViewModel) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.size(8.dp))
                 }
-                Text(if (busy) "Generiere …" else "Bild generieren")
+                Text(if (busy) "Generiere …" else "Lokal SD1.5")
             }
+            OutlinedButton(
+                onClick = { viewModel.generateImage(prompt, negative) },
+                enabled = prompt.isNotBlank() && !busy && mode == ModelType.IMAGE && settings.cloudReady
+            ) {
+                Text("Cloud")
+            }
+        }
+        if (mode == ModelType.IMAGE) {
+            Text(
+                when {
+                    busy -> "Diffusion läuft auf CPU/GPU. ${settings.imageWidth}×${settings.imageHeight}, ${settings.imageSteps} Steps – auf der GPU deutlich schneller als auf der CPU."
+                    localImageModel != null -> "Lokales Modell: $localImageModel"
+                    else -> "Lokales SD1.5-GGUF wird beim ersten Bild automatisch geladen (Modell in Modelle → Bild)."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted,
+                modifier = Modifier.padding(top = 6.dp)
+            )
         }
         if (mode != ModelType.IMAGE) {
             Text(
@@ -183,7 +231,21 @@ fun StudioScreen(viewModel: AppViewModel) {
                     )
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        android.util.Log.d("A56AI-UI", "NPU button clicked busy=$busy")
+                        viewModel.upscaleStudioImage()
+                    },
+                    enabled = !busy
+                ) {
+                    Text(if (busy) "NPU läuft …" else "NPU 4× Upscale")
+                }
+                Spacer(Modifier.weight(1f))
                 TextButton(onClick = { openUrl(context, "file://${currentImage.absolutePath}") }) { Text("Datei") }
                 TextButton(onClick = { viewModel.clearStudioImage() }) { Text("Entfernen") }
             }
@@ -211,6 +273,53 @@ fun StudioScreen(viewModel: AppViewModel) {
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
+
+    if (showImageModels) {
+        ModalBottomSheet(onDismissRequest = { showImageModels = false }, containerColor = Surface1) {
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                Text("Diffusionsmodell", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "SD1.5, SD-Turbo oder ein anderes lokales GGUF/Safetensors-Checkpoint.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextMuted,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+                )
+                Surface(
+                    color = Surface2,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    onClick = {
+                        viewModel.selectImageModel("")
+                        showImageModels = false
+                    }
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Automatisch", fontWeight = FontWeight.SemiBold)
+                        Text("Bevorzugt ein installiertes SD1.5-/SD-Turbo-GGUF.", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                    }
+                }
+                installed.filter {
+                    !it.isLora && (it.name.endsWith(".gguf", true) || it.name.endsWith(".safetensors", true))
+                }.forEach { model ->
+                    Surface(
+                        color = if (settings.imageModelPath == model.file.absolutePath) AccentSoft else Surface2,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        onClick = {
+                            viewModel.selectImageModel(model.file.absolutePath)
+                            showImageModels = false
+                        }
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(model.name, maxLines = 1, fontWeight = FontWeight.SemiBold)
+                            Text("${model.sizeMb} MB", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
     }
 }
 

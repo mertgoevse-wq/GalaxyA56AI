@@ -19,7 +19,7 @@ enum class ModelSource(val label: String) {
 /** What the app can actually execute today. */
 enum class ModelRuntime(val label: String) {
     LLAMA_GGUF("llama.cpp · CPU/NEON"),
-    DIFFUSION("Diffusion · Runtime fehlt"),
+    DIFFUSION("Diffusion · SD1.5 lokal"),
     AUDIO_PIPELINE("Audio · Runtime fehlt"),
     NONE("Nur Katalog")
 }
@@ -42,7 +42,8 @@ data class ModelEntry(
     val notes: String = "",
     val minRamGb: Int = 6
 ) {
-    val runnable: Boolean get() = runtime == ModelRuntime.LLAMA_GGUF && downloadUrl != null
+    val runnable: Boolean get() = downloadUrl != null &&
+        (runtime == ModelRuntime.LLAMA_GGUF || runtime == ModelRuntime.DIFFUSION)
     val sizeLabel: String get() = if (sizeMb >= 1024) "%.1f GB".format(sizeMb / 1024f) else "$sizeMb MB"
 }
 
@@ -71,7 +72,7 @@ object Catalog {
             fileName = "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
             pageUrl = "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF",
             runtime = ModelRuntime.LLAMA_GGUF,
-            backends = listOf("CPU"),
+            backends = listOf("CPU", "GPU"),
             notes = "Schnellster Einstieg. ~15-25 tok/s auf dem A56.",
             minRamGb = 4
         ),
@@ -88,7 +89,7 @@ object Catalog {
             fileName = "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
             pageUrl = "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF",
             runtime = ModelRuntime.LLAMA_GGUF,
-            backends = listOf("CPU"),
+            backends = listOf("CPU", "GPU"),
             notes = "Bester Allrounder für 8 GB RAM.",
             minRamGb = 6
         ),
@@ -105,7 +106,7 @@ object Catalog {
             fileName = "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
             pageUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
             runtime = ModelRuntime.LLAMA_GGUF,
-            backends = listOf("CPU"),
+            backends = listOf("CPU", "GPU"),
             notes = "Starkes Code-Modell, sehr gute Latenz.",
             minRamGb = 4
         ),
@@ -122,7 +123,7 @@ object Catalog {
             fileName = "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
             pageUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
             runtime = ModelRuntime.LLAMA_GGUF,
-            backends = listOf("CPU"),
+            backends = listOf("CPU", "GPU"),
             notes = "Deutlich bessere Code-Qualität, braucht ~3 GB frei.",
             minRamGb = 6
         ),
@@ -139,7 +140,7 @@ object Catalog {
             fileName = "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
             pageUrl = "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF",
             runtime = ModelRuntime.LLAMA_GGUF,
-            backends = listOf("CPU"),
+            backends = listOf("CPU", "GPU"),
             notes = "Mehrsprachig, kompakt, zuverlässig.",
             minRamGb = 4
         ),
@@ -156,7 +157,7 @@ object Catalog {
             fileName = "google_gemma-3-1b-it-Q4_K_M.gguf",
             pageUrl = "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF",
             runtime = ModelRuntime.LLAMA_GGUF,
-            backends = listOf("CPU"),
+            backends = listOf("CPU", "GPU"),
             notes = "Google-Qualität im 1B-Segment, 140+ Sprachen.",
             minRamGb = 4
         ),
@@ -173,7 +174,7 @@ object Catalog {
             fileName = "SmolLM2-1.7B-Instruct-Q4_K_M.gguf",
             pageUrl = "https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF",
             runtime = ModelRuntime.LLAMA_GGUF,
-            backends = listOf("CPU"),
+            backends = listOf("CPU", "GPU"),
             notes = "Sehr flott, gut für Zusammenfassungen.",
             minRamGb = 4
         ),
@@ -190,28 +191,45 @@ object Catalog {
             fileName = "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
             pageUrl = "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF",
             runtime = ModelRuntime.LLAMA_GGUF,
-            backends = listOf("CPU"),
+            backends = listOf("CPU", "GPU"),
             notes = "Sichtbare Denk-Schritte für Mathe/Logik.",
             minRamGb = 4
         ),
 
         // ---------------------------------------------------------------- Image
         ModelEntry(
-            id = "sd15",
-            name = "Stable Diffusion 1.5",
-            author = "RunwayML / Stability",
+            id = "sd15-q4",
+            name = "Stable Diffusion 1.5 Q4_0",
+            author = "RunwayML / Stability · second-state",
             type = ModelType.IMAGE,
             source = ModelSource.HUGGINGFACE,
             params = "983M",
-            sizeMb = 4000,
-            quant = "FP16",
-            downloadUrl = null,
-            fileName = "v1-5-pruned-emaonly.safetensors",
-            pageUrl = "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5",
+            sizeMb = 1520,
+            quant = "Q4_0 GGUF",
+            downloadUrl = "https://huggingface.co/second-state/stable-diffusion-v1-5-GGUF/resolve/main/stable-diffusion-v1-5-pruned-emaonly-Q4_0.gguf",
+            fileName = "sd15-q4_0.gguf",
+            pageUrl = "https://huggingface.co/second-state/stable-diffusion-v1-5-GGUF",
             runtime = ModelRuntime.DIFFUSION,
             backends = listOf("GPU", "CPU"),
-            notes = "Basis für SD1.5-Checkpoints und LoRAs. 512×512, ~4 GB Datei.",
-            minRamGb = 8
+            notes = "Lokale Bild-Runtime, getestet auf dem A56. 512×512, 20 Steps dauern je nach Backend 1–4 Minuten.",
+            minRamGb = 6
+        ),
+        ModelEntry(
+            id = "sd15-q8",
+            name = "Stable Diffusion 1.5 Q8_0",
+            author = "RunwayML / Stability · second-state",
+            type = ModelType.IMAGE,
+            source = ModelSource.HUGGINGFACE,
+            params = "983M",
+            sizeMb = 1764,
+            quant = "Q8_0 GGUF",
+            downloadUrl = "https://huggingface.co/second-state/stable-diffusion-v1-5-GGUF/resolve/main/stable-diffusion-v1-5-pruned-emaonly-Q8_0.gguf",
+            fileName = "sd15-q8_0.gguf",
+            pageUrl = "https://huggingface.co/second-state/stable-diffusion-v1-5-GGUF",
+            runtime = ModelRuntime.DIFFUSION,
+            backends = listOf("GPU", "CPU"),
+            notes = "Höhere Qualität als Q4_0, ~250 MB mehr RAM/VRAM.",
+            minRamGb = 6
         ),
         ModelEntry(
             id = "civitai-dreamshaper",
@@ -249,6 +267,74 @@ object Catalog {
         ),
 
         // ---------------------------------------------------------------- Video
+        ModelEntry(
+            id = "qwen2.5-0.5b-q4",
+            name = "Qwen2.5 0.5B Instruct Q4_K_M",
+            author = "Alibaba · Qwen",
+            type = ModelType.CHAT,
+            source = ModelSource.HUGGINGFACE,
+            params = "0.5B",
+            sizeMb = 397,
+            quant = "Q4_K_M",
+            downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            fileName = "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
+            pageUrl = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+            runtime = ModelRuntime.LLAMA_GGUF,
+            backends = listOf("CPU", "GPU"),
+            notes = "Benchmark-Referenz: ~10 tok/s CPU, ~10 tok/s mit 99 Vulkan-Layern auf dem A56.",
+            minRamGb = 3
+        ),
+        ModelEntry(
+            id = "qwen2.5-0.5b-q8",
+            name = "Qwen2.5 0.5B Instruct Q8_0",
+            author = "Alibaba · Qwen",
+            type = ModelType.CHAT,
+            source = ModelSource.HUGGINGFACE,
+            params = "0.5B",
+            sizeMb = 531,
+            quant = "Q8_0",
+            downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf",
+            fileName = "Qwen2.5-0.5B-Instruct-Q8_0.gguf",
+            pageUrl = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+            runtime = ModelRuntime.LLAMA_GGUF,
+            backends = listOf("CPU", "GPU"),
+            notes = "Kompakt und präziser; gut für schnelle GPU-Layer-Vergleiche.",
+            minRamGb = 3
+        ),
+        ModelEntry(
+            id = "llama-3.2-1b-q8",
+            name = "Llama 3.2 1B Instruct Q8_0",
+            author = "Meta · bartowski",
+            type = ModelType.CHAT,
+            source = ModelSource.HUGGINGFACE,
+            params = "1B",
+            sizeMb = 1320,
+            quant = "Q8_0",
+            downloadUrl = "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q8_0.gguf",
+            fileName = "Llama-3.2-1B-Instruct-Q8_0.gguf",
+            pageUrl = "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF",
+            runtime = ModelRuntime.LLAMA_GGUF,
+            backends = listOf("CPU", "GPU"),
+            notes = "Qualitätsstufe über Q4_K_M; passt noch in 8 GB RAM.",
+            minRamGb = 4
+        ),
+        ModelEntry(
+            id = "wan21-t2v-1.3b",
+            name = "Wan 2.1 T2V 1.3B",
+            author = "Alibaba · Wan-Video",
+            type = ModelType.VIDEO,
+            source = ModelSource.HUGGINGFACE,
+            params = "1.3B",
+            sizeMb = 2800,
+            quant = "Q4_K_M GGUF",
+            downloadUrl = null,
+            fileName = "wan2.1-t2v-1.3b-Q4_K_M.gguf",
+            pageUrl = "https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B",
+            runtime = ModelRuntime.NONE,
+            backends = listOf("GPU", "CPU"),
+            notes = "SD.cpp unterstützt Wan-Video; UI/Runtime für Clips folgt. 16–33 Frames, sehr langsam auf 4 CUs.",
+            minRamGb = 8
+        ),
         ModelEntry(
             id = "animatediff-motion",
             name = "AnimateDiff Motion Adapter v1.5.2",

@@ -7,10 +7,10 @@ einer Oberfläche im Stil von ChatGPT/Claude.
 
 > **Ehrlicher Status (auf SM-A566B verifiziert):** GGUF-Inferenz läuft echt über
 > **llama.cpp** auf CPU/NEON **und** über den **Vulkan-Backend auf der Xclipse 540**
-> (Qwen2.5-0.5B Q4_K_M: 10,3 tok/s mit 89 GPU-Layern). Die NPU ist hardwaremäßig vorhanden,
-> wird von diesem Android-ROM aber **nicht als NNAPI-Accelerator exponiert** – NNAPI zeigt
-> nur `nnapi-reference` (CPU). Lokale Bildgenerierung ist weiterhin **nicht implementiert**;
-> Bilder laufen über die optionale Gemini-API. Details unten.
+> (Qwen2.5-0.5B Q4_K_M: 10,3 tok/s mit 89 GPU-Layern). Die NPU ist über NNAPI **nicht**
+> exponiert, aber über Samsungs öffentliche **ENN-Vendor-API** erreichbar: Der
+> geräteeigene MIDAS-4×-Upscaler läuft auf der NPU (256→1024 in ~0,2 s). Lokale
+> Bildgenerierung läuft über **stable-diffusion.cpp** (SD1.5, CPU/Vulkan). Details unten.
 
 ---
 
@@ -20,13 +20,14 @@ einer Oberfläche im Stil von ChatGPT/Claude.
 |---|---|---|
 | Chat / Coding / Reasoning (GGUF) | ✅ implementiert | llama.cpp `b6390`, Q4_K_M, Streaming, Stop, Chat-Templates (ChatML, Llama 3, Gemma, Phi) |
 | Modell-Downloads | ✅ implementiert | Hugging Face direkt mit Resume (`.part`), Civitai mit API-Token |
-| Modell-Suche | ✅ implementiert | HF-API (`filter=gguf|lora`), Civitai-API (`types=Checkpoint,LORA`), NSFW-Filter |
+| Modell-Suche | ✅ auf Gerät verifiziert | Unified **Entdecken**: HF + Civitai parallel, automatische Suche, Quantisierungs-Badges, LLM/Bild/LoRA, alle Dateiformate, `abliterated`/`uncensored`/NSFW nur hinter 18+-Gate |
 | LoRA-Adapter | ✅ implementiert | GGUF-LoRA über `llama_adapter_lora_init` + `llama_set_adapter_lora`, Skalierung 0–1.5 |
 | NSFW / Abliterated / Uncensored | ✅ implementiert | 18+-Bestätigung, Toggle, Suche nach `abliterated`, `uncensored`, Civitai-NSFW |
-| NPU-Erkennung + NNAPI-Probe | ⚠️ implementiert, Treiber limitiert | NNAPI-Geräteabfrage; ADD-Graph kompiliert, Ausführung auf `nnapi-reference` endet mit Code 4. Kein NPU-Accelerator über NNAPI auf diesem ROM. |
+| NPU über ENN (Samsung) | ✅ auf Gerät verifiziert | Öffentliche ENN-API (`libenn_public_api_cpp.so`) dynamisch geladen; MIDAS-4×-NPU-Upscaler 256→1024 in **189–259 ms**, HumanSeg 288×288 in **6 ms**. Keine proprietären Binaries im Repo. |
+| NNAPI-Probe | ⚠️ Treiber limitiert | ADD-Graph kompiliert, Ausführung auf `nnapi-reference` endet mit Code 4. Kein NPU-Accelerator über NNAPI auf diesem ROM. |
 | GPU-Erkennung | ✅ implementiert | Vulkan-Instanz, „Samsung Xclipse 540“, API 1.3, RT-/IntDot, 4 Compute-CUs |
 | GPU-Inferenz (Vulkan) | ✅ auf Gerät verifiziert | llama.cpp `GGML_VULKAN=ON`, GPU-Layer-Offload, 10,3 tok/s (Qwen2.5-0.5B Q4_K_M) |
-| Lokale Bildgenerierung (SD 1.5) | ❌ offen | Katalog + Download vorhanden, Runtime fehlt |
+| Lokale Bildgenerierung (SD 1.5 / SD-Turbo) | ✅ SD1.5, ⚠️ SD-Turbo | `stable-diffusion.cpp` als separate `libstable-diffusion.so`; SD1.5 läuft, SD-Turbo lädt und rechnet, liefert mit diesem GGUF-Export aber nur Rauschen (Zero-Terminal-SNR-Metadaten fehlen). Modellauswahl, CFG, Steps, **VAE-Tiling** (512×512 getestet). |
 | Lokale Video-/Musikgenerierung | ❌ offen | Katalog + Download vorhanden, Runtime fehlt |
 | Cloud-Chat + Cloud-Bild | ✅ implementiert | Gemini API-Key (`gemini-2.5-flash`, `-pro`, `gemini-2.5-flash-image`) |
 
@@ -35,23 +36,39 @@ Auf dem **Galaxy A56 (SM-A566B, Android 17)** installiert und getestet:
 - Hardware-Probe: 8 Kerne (4P + 4E), 7.416 MB RAM, Xclipse 540 mit Vulkan 1.3.
 - CPU-Inferenz: Qwen2.5-0.5B Q4_K_M, 7 Threads → **10,7 tok/s**.
 - Vulkan-Inferenz: 89 GPU-Layer → **10,3 tok/s**, Backend „CPU+Vulkan Samsung Xclipse 540“.
-- APK: 70,9 MB (Vulkan-Build), `libgalaxya56.so` 34,4 MB inkl. SPIR-V-Shader;
-  CPU-Build 62,3 MB. Beide Builds kompilieren.
+- ENN/NPU: MIDAS-4×-Upscaler 256×256→1024×1024 in **189–259 ms**, HumanSeg 288×288 in **6 ms**.
+- APK: 79 MB (aktueller Debug-Build inkl. SD-Runtime + ENN); frühere Builds: Vulkan 70,9 MB,
+  CPU 62,3 MB.
+- **512×512 / SD1.5 Q4_0 / Vulkan**, 8 Steps, CFG 7: **107,1 s** (4 Steps: 85,8 s);
+  Peak PSS **3,58 GiB**, Peak GL/Vulkan **3,38 GiB**, `VmHWM` **1,67 GiB**.
+- **VAE-Tiling** bei 512×512/8 Steps: **122,4 s**, Peak GL **2,44 GiB** statt 3,38 GiB;
+  Peak PSS 3,45 GiB. Thermik: Thermal-Status 2–3, AP bis **52,4 °C**, Skin bis **45,2 °C**.
+- **SD-Turbo Q8_0**, 512×512, CFG 1, erzwungene v-Prediction: 1 Step **29,9 s**, 4 Steps **45,2 s**.
+  Die Ausgabe war in beiden Fällen nur Rauschen/Brei; das ist **kein gültiger Qualitätsvergleich**.
+  Ursache: Der GGUF-Export enthält weder `alphas_cumprod` (Zero-Terminal-SNR) noch `v_pred`-Markierungen.
+- **SD1.5 Q4_0** gleicher 4-Step-Lauf mit CFG 1: **44,9 s**, aber sehr weich – CFG 7 bleibt der bessere Default.
+- Chat-UI auf Gerät getestet: Qwen2.5-0.5B Q4_K_M, **12,1 tok/s** Streaming-Antwort.
 
 ---
 
 ## Funktionen der App
 
-- **Chat-Oberfläche** wie ChatGPT/Claude: Verlauf-Schublade, Streaming, Codeblöcke mit
-  Copy-Button, Stop, Modell- und System-Prompt-Auswahl, Token-/tok-s-Anzeige.
+- **Chat-Oberfläche** mit lokalem Hero, Verlauf-Schublade, Streaming, Codeblöcken,
+  Copy-Button, Stop, Modell-/System-Prompt-Auswahl, Token-/tok-s-Anzeige und
+  lokalem/Cloud-Modellstatus.
 - **Coding-Modus** über Qwen2.5-Coder (1.5B/3B) mit passendem System-Prompt.
-- **Studio**: Bild-, Video- und Musik-Tab mit Prompt-Feldern, Modellkatalog und
-  Cloud-Bildgenerierung.
-- **Modelle**: installierte Dateien, Katalog, Hugging-Face-Suche, Civitai-Suche,
-  LoRA-Tab, Fortschritt/Abbrechen/Löschen.
-- **Optionen**: Hardware-Karte, Backend-Reihenfolge (NPU → GPU → CPU), Kontext, Threads,
-  Temperatur, Top-P, max. Tokens, System-Prompt-Bibliothek, Cloud-Key, HF-/Civitai-Token,
-  NSFW-Freigabe, LoRA-Stärke.
+- **Studio**: Bild-, Video- und Musik-Tab mit Prompt-Feldern, Modellkatalog,
+  lokaler SD1.5-Generierung (SD-Turbo lädt, Qualität ist mit dem getesteten Export noch unbrauchbar),
+  auswählbarem Checkpoint, CFG/Steps/VAE-Tiling,
+  Cloud-Bildgenerierung und **NPU-4×-Upscale** des aktuellen Bildes.
+- **Modelle → Entdecken**: automatische, gemeinsame Suche auf Hugging Face und Civitai;
+  Filter für LLM, Bildmodelle und LoRAs; Quantisierungen (Q2–Q8, FP16 …) direkt an der
+  Karte; alle Dateien inklusive LoRA; `abliterated`, `uncensored`, `unliberated` und NSFW
+  werden nicht ausgeblendet — nur die 18+-Bestätigung schützt den Zugang.
+- **Modelle → LoRA**: Bild- und Sprach-LoRAs, Download nach `loras/`, Anwenden auf GGUF.
+- **Optionen**: Hardware-Karte, Backend-Reihenfolge (NPU → GPU → CPU), ENN-/NPU-Test,
+  Kontext, Threads, Temperatur, Top-P, max. Tokens, System-Prompt-Bibliothek, Cloud-Key,
+  HF-/Civitai-Token, NSFW-Freigabe, LoRA-Stärke.
 - **Hardware-Probe** (nativ): CPU-Kerne (Performance/Efficiency über MIDR), Max-Takt,
   RAM, Thermalzonen, Vulkan-GPU, NNAPI-NPU, SoC-TOPS.
 
@@ -121,9 +138,10 @@ MainActivity
 Native (C++17, arm64-v8a)                    │
 ├── hardware_detector.cpp      Vulkan / NNAPI / procfs / properties
 ├── npu_probe.cpp              NNAPI-ADD-Graph + Geräte-/Latenzbericht
+├── enn_engine.cpp             Samsung ENN: NPU-Probe, .nnc-Benchmark, MIDAS-4×-Upscale
 ├── llama_engine.cpp           llama.cpp, Streaming, Cancel, LoRA, GPU-Layer
 ├── vulkan_android_compat.cpp  vkResetQueryPool für API < 33
-└── jni_bridge.cpp             11 JNI-Methoden, JSON-Transport
+└── jni_bridge.cpp             JNI-Methoden, JSON-Transport
 ```
 
 Datenfluss Chat: `AppViewModel.send()` → Prompt mit Chat-Template → `nativeGenerate`
@@ -155,18 +173,23 @@ zusätzlich beliebige GGUF- und LoRA-Dateien über die Suche laden.
 - API-Keys und HF-/Civitai-Tokens liegen in `SharedPreferences` (nicht verschlüsselt).
   Für maximale Sicherheit nur eigene Geräte nutzen und Tokens widerrufen, wenn nötig.
 - Modell-Downloads laufen über HTTPS; die App hat keine Telemetrie.
+- ENN: Es werden **keine Samsung-Binaries** mitgeliefert. Die App lädt die öffentliche
+  Vendor-Lib (`libenn_public_api_cpp.so`) zur Laufzeit und nutzt die bereits auf dem Gerät
+  vorhandenen `.nnc`-Modelle (MIDAS/HumanSeg).
 
 ---
 
 ## Offene Arbeiten
 
-1. NPU: Samsung **ENN SDK** statt NNAPI evaluieren (nicht öffentlich im NDK); alternativ
-   LiteRT + Samsung-Delegate, falls verfügbar. NNAPI-Referenz-Treiber unterstützt den
-   Probe-Graphen nicht (Code 4).
-2. Diffusion-Runtime: stable-diffusion.cpp (SD 1.5, Q8_0) als JNI-Modul; Modelldownload
-   und 512×512-Pipeline auf 7,4 GB RAM testen.
-3. Audio-Runtime: MusicGen / Stable Audio Open Small, Whisper-ggml, TTS.
-4. Benchmark-Suite: Prompt-Länge, Threads, GPU-Layer und Thermik systematisch messen.
+1. ENN-Modellcompiler: Öffentlich verfügbare `.nnc`-Modelle sind meist für Exynos 2500
+   (Solomon, NCP 28) kompiliert; der A56 nutzt NCP 26. LLM-/Diffusions-NNC bräuchten den
+   nicht öffentlichen ENN-Compiler. Die vorhandene ENN-Runtime ist auf CNN-Modelle
+   (MIDAS, HumanSeg) beschränkt.
+2. Bild-Runtime: SD1.5/SD-Turbo sind vermessen. Offen: SDXL/Flux auf 8 GB RAM,
+   automatische Modell-Empfehlung nach freiem RAM und Bild-LoRA-Anwendung im SD-Graph.
+3. Audio-/Video-Runtime: MusicGen / ACE-Step, Wan2.1; `.nnc`-Modelle für die NPU fehlen.
+4. Benchmark-Suite: Prompt-Länge, Threads, GPU-Layer, Steps/CFG, VAE-Tiling und Thermik
+   systematisch und mit Kühlpausen messen; die ersten 512er-Werte stehen oben.
 5. Vulkan auf weiteren Geräten testen (Xclipse 540 ist verifiziert, Adreno/Mali offen).
 
 ---
@@ -174,4 +197,4 @@ zusätzlich beliebige GGUF- und LoRA-Dateien über die Suche laden.
 ## Lizenz
 
 MIT — siehe [`LICENSE`](LICENSE). llama.cpp steht unter MIT, siehe
-`app/src/main/cpp/third_party/llama.cpp/LICENSE`.
+`app/src/main/cpp/third_party/llama.cpp/LICENSE`; stable-diffusion.cpp ebenfalls unter MIT.

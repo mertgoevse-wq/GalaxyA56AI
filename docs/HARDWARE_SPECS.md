@@ -13,7 +13,7 @@ Hardware-Probe der App erfasst. Herstellerangaben sind als solche markiert.
 | CPU-Takt | A720 bis 2,60 GHz laut `cpufreq` (Probe meldet 2,91 GHz Maximalwert), A520 bis 1,95 GHz |
 | GPU | Samsung Xclipse 540 (RDNA-basiert), Vulkan 1.3, Treiber `25.6.3` |
 | GPU-Compute | `VK_AMD_shader_core_properties2`: **4 aktive CUs**, Wavefront 64 |
-| NPU | Samsung NPU, **~35 TOPS INT8 / ~17 TOPS FP16** (Herstellerangabe) |
+| NPU | Samsung NPU, **14,7 TOPS INT8 / ~7,3 TOPS FP16** (Herstellerangabe) |
 | RAM | **7.416 MB** sichtbar, davon ~2,4 GB frei; 12 GB Swap |
 | Speicher | 128/256 GB UFS |
 
@@ -42,8 +42,10 @@ nnapi-reference · Typ cpu · Feature-Level 1000008
 
 Es gibt **keinen** `accelerator`-Eintrag und keinen Samsung-NPU-Treiber über NNAPI.
 Die NPU-Hardware ist vorhanden, wird von Android aber nicht als NNAPI-Accelerator
-exponiert. Samsung stellt seine NPU stattdessen über das **ENN SDK** bereit, das nicht
-Teil des öffentlichen Android-NDK ist.
+exponiert. Samsung stellt seine NPU stattdessen über die **ENN-Vendor-API** bereit:
+`libenn_public_api_cpp.so` ist in `/vendor/etc/public.libraries.txt` gelistet, der
+Unified-Treiber enthält `NpuUserDriver`, und die App bindet ihn über
+`<uses-native-library>` + `dlopen` ein. Der A56 nutzt **NCP 26** (Santa/Quadra).
 
 Der native NNAPI-Graph (FLOAT32-ADD mit Fused-Activation) wird erfolgreich erstellt und
 kompiliert, die Ausführung auf dem Referenz-Treiber endet jedoch mit
@@ -56,7 +58,8 @@ NPU-Zugriff. Die App zeigt diesen Befund inklusive Geräteliste in den Optionen 
 |---|---|---|
 | CPU/NEON | ✅ echte Inferenz | Qwen2.5-0.5B Q4_K_M, 7 Threads: **10,7 tok/s**, 18,1 s Prompt (4096 Kontext) |
 | GPU/Vulkan | ✅ echte Inferenz | gleiches Modell, 89 GPU-Layer: **10,3 tok/s**, 18,5 s Prompt, Backend „CPU+Vulkan Samsung Xclipse 540“ |
-| NPU/NNAPI | ⚠️ Probe vorhanden | Modell kompiliert; Ausführung nur auf `nnapi-reference` (CPU), Code 4; kein NPU-Device |
+| NPU/NNAPI | ⚠️ Probe vorhanden | Modell kompiliert; Ausführung nur auf `nnapi-reference` (CPU), Code 4; kein NNAPI-Accelerator |
+| NPU/ENN | ✅ echte Inferenz | MIDAS-4×-Upscaler 256×256→1024×1024: **189–259 ms**; HumanSeg 288×288: **6 ms**; ENN 2.3.30, NPU-NCP 26 |
 | Cloud | ✅ optional | Gemini API (Chat + Bild) |
 
 Gemessen mit 4 Threads: 1,2 tok/s. Die Thread-Zahl ist der größte Hebel; 7 Threads

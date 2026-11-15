@@ -25,7 +25,13 @@ data class AppSettings(
     val selectedModelPath: String = "",
     val loraScale: Float = 0.8f,
     val maxTokens: Int = 512,
-    val gpuLayers: Int = 0
+    val gpuLayers: Int = 0,
+    val imageModelPath: String = "",
+    val imageWidth: Int = 384,
+    val imageHeight: Int = 384,
+    val imageSteps: Int = 8,
+    val imageCfg: Float = 7.0f,
+    val imageVaeTiling: Boolean = false
 ) {
     val systemPrompt: String
         get() = if (customSystemPrompt.isNotBlank()) customSystemPrompt
@@ -64,7 +70,13 @@ class SettingsStore(context: Context) {
         selectedModelPath = prefs.getString("selectedModelPath", "") ?: "",
         loraScale = prefs.getFloat("loraScale", 0.8f),
         maxTokens = prefs.getInt("maxTokens", 512),
-        gpuLayers = prefs.getInt("gpuLayers", 0)
+        gpuLayers = prefs.getInt("gpuLayers", 0),
+        imageModelPath = prefs.getString("imageModelPath", "") ?: "",
+        imageWidth = prefs.getInt("imageWidth", 384),
+        imageHeight = prefs.getInt("imageHeight", 384),
+        imageSteps = prefs.getInt("imageSteps", 8),
+        imageCfg = prefs.getFloat("imageCfg", 7.0f),
+        imageVaeTiling = prefs.getBoolean("imageVaeTiling", false)
     )
 
     fun update(transform: (AppSettings) -> AppSettings) {
@@ -91,6 +103,12 @@ class SettingsStore(context: Context) {
             putFloat("loraScale", next.loraScale)
             putInt("maxTokens", next.maxTokens)
             putInt("gpuLayers", next.gpuLayers)
+            putString("imageModelPath", next.imageModelPath)
+            putInt("imageWidth", next.imageWidth)
+            putInt("imageHeight", next.imageHeight)
+            putInt("imageSteps", next.imageSteps)
+            putFloat("imageCfg", next.imageCfg)
+            putBoolean("imageVaeTiling", next.imageVaeTiling)
         }.apply()
     }
 }

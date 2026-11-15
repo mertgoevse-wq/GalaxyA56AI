@@ -47,8 +47,26 @@ add_subdirectory(third_party/llama.cpp EXCLUDE_FROM_ALL)
 set(GALAXYA56_SOURCES
     hardware_detector.cpp
     llama_engine.cpp
+    image_engine.cpp
     jni_bridge.cpp
     npu_probe.cpp
+    enn_engine.cpp
+)
+
+# ---------------------------------------------------------------------------
+# stable-diffusion.cpp (vendored, MIT) — real SD1.5 image inference.
+# Built as a separate shared library by scripts/build-sdcpp.sh so its patched
+# ggml never collides with llama.cpp's ggml in this process. Only sd_* symbols
+# are exported; ggml stays hidden.
+# ---------------------------------------------------------------------------
+set(SDCPP_LIB "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libstable-diffusion.so")
+if(NOT EXISTS "${SDCPP_LIB}")
+    message(FATAL_ERROR "libstable-diffusion.so fehlt: scripts/build-sdcpp.sh ausfuehren (${SDCPP_LIB})")
+endif()
+add_library(sd_cpp SHARED IMPORTED)
+set_target_properties(sd_cpp PROPERTIES
+    IMPORTED_LOCATION "${SDCPP_LIB}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/include"
 )
 if(GALAXYA56_VULKAN)
     list(APPEND GALAXYA56_SOURCES vulkan_android_compat.cpp)
@@ -72,6 +90,7 @@ find_library(android-lib android)
 
 target_link_libraries(galaxya56
     llama
+    sd_cpp
     ${log-lib}
     ${android-lib}
     ${vulkan-lib}

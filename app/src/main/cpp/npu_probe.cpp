@@ -202,7 +202,20 @@ std::string nnapiProbeJson() {
     json << ",\"chosenType\":\"" << deviceTypeName(chosenType) << "\"";
 
     if (!chosen) {
-        json << ",\"ok\":false,\"error\":\"Kein NNAPI-Gerät verfügbar\"}";
+        json << ",\"ok\":false,\"npu\":false,\"reason\":\"no_device\",\"error\":\"Kein NNAPI-Gerät verfügbar\"}";
+        return json.str();
+    }
+
+    // Only a real accelerator can run NPU inference. On most Android builds the
+    // only exposed device is nnapi-reference (CPU), which cannot execute the ADD
+    // graph and reports ANEURALNETWORKS_BAD_DATA at compute time. Detect that
+    // before spending time compiling, and report the hardware limit instead of a
+    // misleading driver error.
+    if (chosenType != ANEURALNETWORKS_DEVICE_ACCELERATOR) {
+        json << ",\"ok\":false,\"npu\":false,\"reason\":\"no_accelerator\""
+             << ",\"error\":\"Kein NNAPI-Accelerator exponiert (nur "
+             << deviceTypeName(chosenType) << "). NPU-Inferenz ist auf diesem ROM nicht moeglich.\"}";
+        LOGI("NNAPI: no accelerator, chosen=%s type=%s", chosenName.c_str(), deviceTypeName(chosenType));
         return json.str();
     }
 
@@ -254,7 +267,12 @@ std::string nnapiProbeJson() {
     }
 
     ANeuralNetworksCompilation* compilation = nullptr;
-    rc = api.compilationCreate(model, &compilation);
+    // Compile explicitly for the accelerator; otherwise the runtime may silently
+    // schedule the graph on the reference CPU driver.
+    rc = api.compilationCreateForDevices(model, &chosen, 1, &compilation);
+    if (rc != ANEURALNETWORKS_NO_ERROR) {
+        rc = api.compilationCreate(model, &compilation);
+    }
     if (rc == ANEURALNETWORKS_NO_ERROR) {
         api.compilationSetPreference(compilation, ANEURALNETWORKS_PREFER_SUSTAINED_SPEED);
         rc = api.compilationFinish(compilation);
@@ -281,22 +299,24 @@ std::string nnapiProbeJson() {
     if (rc == ANEURALNETWORKS_NO_ERROR) {
         rc = api.executionSetOutput(execution, 3, &tensorType, out, sizeof(out));
     }
-    stage = "compute";
+    stage = "startCompute";
     auto start = std::chrono::steady_clock::now();
-    if (rc == ANEURALNETWORKS_NO_ERROR && api.executionCompute) {
-        rc = api.executionCompute(execution);
-    } else if (rc == ANEURALNETWORKS_NO_ERROR && api.executionStartCompute) {
+    if (rc == ANEURALNETWORKS_NO_ERROR && api.executionStartCompute && api.eventWait) {
         ANeuralNetworksEvent* event = nullptr;
         rc = api.executionStartCompute(execution, &event);
         if (rc == ANEURALNETWORKS_NO_ERROR && event) {
             rc = api.eventWait(event);
             if (api.eventFree) api.eventFree(event);
+        } else if (rc == ANEURALNETWORKS_NO_ERROR) {
+            rc = ANEURALNETWORKS_BAD_DATA;
         }
+    } else if (rc == ANEURALNETWORKS_NO_ERROR) {
+        rc = ANEURALNETWORKS_BAD_STATE;
     }
     auto end = std::chrono::steady_clock::now();
     double ms = std::chrono::duration<double, std::milli>(end - start).count();
 
-    json << ",\"latencyMs\":" << ms;
+    json << ",\"npu\":true,\"execution\":\"async\",\"latencyMs\":" << ms;
     if (rc == ANEURALNETWORKS_NO_ERROR) {
         json << ",\"output\":[" << out[0] << "," << out[1] << "," << out[2] << "," << out[3] << "]";
         json << ",\"correct\":" << ((out[0] == 11.0f && out[1] == 22.0f &&

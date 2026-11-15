@@ -306,7 +306,7 @@ std::string hardwareJson() {
     std::string socLower = soc;
     std::transform(socLower.begin(), socLower.end(), socLower.begin(), ::tolower);
     if (socLower.find("s5e8855") != std::string::npos || socLower.find("exynos 1580") != std::string::npos) {
-        topsInt8 = 35; topsFp16 = 17; topsFp8 = 35;
+        topsInt8 = 14; topsFp16 = 7; topsFp8 = 14;
     } else if (socLower.find("s5e8845") != std::string::npos || socLower.find("exynos 1480") != std::string::npos) {
         topsInt8 = 15; topsFp16 = 7;
     } else if (npu.available) {

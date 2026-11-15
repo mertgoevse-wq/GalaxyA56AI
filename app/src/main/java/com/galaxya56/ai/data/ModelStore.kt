@@ -40,7 +40,9 @@ data class InstalledModel(
 data class RemoteFile(
     val name: String,
     val sizeMb: Long,
-    val url: String
+    val url: String,
+    val quant: String? = null,
+    val format: String = ""
 )
 
 data class RemoteModel(

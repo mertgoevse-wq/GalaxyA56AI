@@ -76,6 +76,8 @@ CMakeCache.txt
 cmake_install.cmake
 Makefile
 *.cmake
+# Vendored CMake modules are source, not generated build files
+!app/src/main/cpp/third_party/stable-diffusion.cpp/**/*.cmake
 
 # Temporary files
 *.orig

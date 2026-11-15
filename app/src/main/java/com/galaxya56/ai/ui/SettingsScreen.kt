@@ -49,6 +49,11 @@ fun SettingsScreen(viewModel: AppViewModel) {
     val installed by viewModel.installed.collectAsStateWithLifecycle()
     val npuProbe by viewModel.npuProbe.collectAsStateWithLifecycle()
     val npuProbeBusy by viewModel.npuProbeBusy.collectAsStateWithLifecycle()
+    val ennProbe by viewModel.ennProbe.collectAsStateWithLifecycle()
+    val ennBenchmark by viewModel.ennBenchmark.collectAsStateWithLifecycle()
+    val ennBusy by viewModel.ennBusy.collectAsStateWithLifecycle()
+    val benchmark by viewModel.benchmark.collectAsStateWithLifecycle()
+    val benchmarkBusy by viewModel.benchmarkBusy.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var customPrompt by rememberSaveable(settings.customSystemPrompt) { mutableStateOf(settings.customSystemPrompt) }
@@ -125,6 +130,122 @@ fun SettingsScreen(viewModel: AppViewModel) {
                         modifier = Modifier.padding(10.dp)
                     )
                 }
+            }
+        }
+
+        SettingsCard("Samsung ENN (NPU)") {
+            Text(
+                "ENN ist Samsungs öffentliche Neural-API für Exynos. Die Runtime wird zur Laufzeit " +
+                    "aus der Vendor-Lib geladen (kein proprietäres Binary im Repo). Auf dem A56 läuft " +
+                    "der geräteeigene MIDAS-4×-Upscaler (256→1024) auf der NPU; der Test nutzt ihn.",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted
+            )
+            LabelledValue("Modellpfad", "Android/data/com.galaxya56.ai/files/models/*.nnc")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { viewModel.runEnnProbe() }, enabled = !ennBusy) {
+                    Text(if (ennBusy) "ENN läuft …" else "ENN/NPU prüfen")
+                }
+                OutlinedButton(onClick = { viewModel.runEnnBenchmark() }, enabled = !ennBusy) {
+                    Text("MIDAS 4× testen")
+                }
+            }
+            ennProbe?.let { report ->
+                Surface(
+                    color = Surface2,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                ) {
+                    Text(report, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(10.dp))
+                }
+            }
+            ennBenchmark?.let { report ->
+                Surface(
+                    color = Surface2,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                ) {
+                    Text(report, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(10.dp))
+                }
+            }
+        }
+
+        SettingsCard("Bild-Runtime (SD1.5)") {
+            Text(
+                "Lokale Diffusion über stable-diffusion.cpp. Kleinere Auflösung und weniger Steps " +
+                    "verhindern Thermal-Throttling; 384×384/8 Steps ist der sichere A56-Default.",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted
+            )
+            SliderRow(
+                label = "Breite",
+                value = settings.imageWidth.toFloat(),
+                valueText = "${settings.imageWidth} px",
+                range = 256f..512f,
+                steps = 8,
+                onChange = { viewModel.updateSettings { s -> s.copy(imageWidth = it.toInt()) } }
+            )
+            SliderRow(
+                label = "Höhe",
+                value = settings.imageHeight.toFloat(),
+                valueText = "${settings.imageHeight} px",
+                range = 256f..512f,
+                steps = 8,
+                onChange = { viewModel.updateSettings { s -> s.copy(imageHeight = it.toInt()) } }
+            )
+            SliderRow(
+                label = "Steps",
+                value = settings.imageSteps.toFloat(),
+                valueText = "${settings.imageSteps}",
+                range = 1f..20f,
+                steps = 19,
+                onChange = { viewModel.updateSettings { s -> s.copy(imageSteps = it.toInt()) } }
+            )
+            SliderRow(
+                label = "CFG",
+                value = settings.imageCfg,
+                valueText = "%.1f".format(settings.imageCfg),
+                range = 1f..12f,
+                steps = 21,
+                onChange = { viewModel.updateSettings { s -> s.copy(imageCfg = it) } }
+            )
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("VAE-Tiling", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Teilt den VAE-Decoder in Kacheln; senkt den VRAM-Peak, kostet etwas Zeit.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextMuted
+                    )
+                }
+                Switch(
+                    checked = settings.imageVaeTiling,
+                    onCheckedChange = { viewModel.updateSettings { s -> s.copy(imageVaeTiling = it) } }
+                )
+            }
+            LabelledValue("Modell", settings.imageModelPath.ifBlank { "auto: SD1.5/SD-Turbo" })
+        }
+
+        SettingsCard("GPU-Layer-Benchmark") {
+            Text(
+                "Lädt das aktive GGUF mit 0/25/50/75/100 % Offload und misst echte tok/s. " +
+                    "Nur mit -Pvulkan=true gebauten APKs sinnvoll.",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted
+            )
+            Button(
+                onClick = { viewModel.runGpuLayerBenchmark() },
+                enabled = !benchmarkBusy,
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                Text(if (benchmarkBusy) "Benchmark läuft …" else "GPU-Layer benchmarken")
+            }
+            benchmark.forEach { row ->
+                LabelledValue(
+                    "${row.percent} % · ${row.layers} Layer",
+                    if (row.error != null) "Fehler: ${row.error}"
+                    else "%.1f tok/s · Prompt %d ms · %s".format(row.tokensPerSecond, row.promptMs, row.backend)
+                )
             }
         }
 

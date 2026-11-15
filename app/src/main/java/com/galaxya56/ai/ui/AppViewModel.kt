@@ -7,6 +7,9 @@ import com.galaxya56.ai.data.AppSettings
 import com.galaxya56.ai.data.Catalog
 import com.galaxya56.ai.data.DownloadState
 import com.galaxya56.ai.data.InstalledModel
+import com.galaxya56.ai.data.DiscoveryKind
+import com.galaxya56.ai.data.DiscoveryModel
+import com.galaxya56.ai.data.ModelDiscovery
 import com.galaxya56.ai.data.ModelEntry
 import com.galaxya56.ai.data.ModelSource
 import com.galaxya56.ai.data.ModelStore
@@ -46,12 +49,31 @@ data class Conversation(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+data class BenchmarkRow(
+    val layers: Int,
+    val percent: Int,
+    val tokensPerSecond: Double,
+    val promptMs: Long,
+    val genMs: Long,
+    val backend: String,
+    val error: String? = null
+)
+
 data class RemoteSearchState(
     val query: String = "",
     val source: ModelSource = ModelSource.HUGGINGFACE,
     val loraOnly: Boolean = false,
     val loading: Boolean = false,
     val results: List<RemoteModel> = emptyList(),
+    val error: String? = null
+)
+
+data class DiscoveryState(
+    val query: String = "",
+    val kind: DiscoveryKind = DiscoveryKind.ALL,
+    val source: ModelSource? = null,
+    val loading: Boolean = false,
+    val results: List<DiscoveryModel> = emptyList(),
     val error: String? = null
 )
 
@@ -90,6 +112,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _npuProbeBusy = MutableStateFlow(false)
     val npuProbeBusy: StateFlow<Boolean> = _npuProbeBusy
 
+    private val _ennProbe = MutableStateFlow<String?>(null)
+    val ennProbe: StateFlow<String?> = _ennProbe
+
+    private val _ennBenchmark = MutableStateFlow<String?>(null)
+    val ennBenchmark: StateFlow<String?> = _ennBenchmark
+
+    private val _ennBusy = MutableStateFlow(false)
+    val ennBusy: StateFlow<Boolean> = _ennBusy
+
+    private val _benchmark = MutableStateFlow<List<BenchmarkRow>>(emptyList())
+    val benchmark: StateFlow<List<BenchmarkRow>> = _benchmark
+
+    private val _benchmarkBusy = MutableStateFlow(false)
+    val benchmarkBusy: StateFlow<Boolean> = _benchmarkBusy
+
     private val _remote = MutableStateFlow(RemoteSearchState())
     val remote: StateFlow<RemoteSearchState> = _remote
 
@@ -98,6 +135,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _fileSheet = MutableStateFlow<RemoteModel?>(null)
     val fileSheet: StateFlow<RemoteModel?> = _fileSheet
+
+    private val discoveryRepo = ModelDiscovery(settingsStore)
+    private val _discovery = MutableStateFlow(DiscoveryState())
+    val discovery: StateFlow<DiscoveryState> = _discovery
+    private val _discoverySheet = MutableStateFlow<DiscoveryModel?>(null)
+    val discoverySheet: StateFlow<DiscoveryModel?> = _discoverySheet
 
     private val _studioImage = MutableStateFlow<File?>(null)
     val studioImage: StateFlow<File?> = _studioImage
@@ -108,8 +151,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _studioError = MutableStateFlow<String?>(null)
     val studioError: StateFlow<String?> = _studioError
 
+    private val _localImageModel = MutableStateFlow<String?>(null)
+    val localImageModel: StateFlow<String?> = _localImageModel
+
+    private var loadedImagePath: String = ""
     private var loadedPath: String = ""
     private var loadedBackend: String = "CPU"
+    private var debugEnnModelPath: String? = null
 
     init {
         loadConversations()
@@ -131,6 +179,76 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsStore.update(transform)
 
+    /**
+     * Loads the active GGUF once per GPU-layer split and records real tok/s.
+     * Runs on Dispatchers.IO and leaves the last configuration loaded.
+     */
+    fun runGpuLayerBenchmark() {
+        if (_benchmarkBusy.value) return
+        val s = settings.value
+        val path = loadedPath.ifBlank {
+            s.selectedModelPath.ifBlank {
+                installed.value.firstOrNull { !it.isLora }?.file?.absolutePath.orEmpty()
+            }
+        }
+        if (path.isBlank()) {
+            _status.value = "Benchmark: zuerst ein GGUF-Modell auswaehlen"
+            return
+        }
+        _benchmarkBusy.value = true
+        _benchmark.value = emptyList()
+        viewModelScope.launch {
+            val rows = mutableListOf<BenchmarkRow>()
+            var layerCount = 24
+            try {
+                withContext(Dispatchers.IO) {
+                    val probe = LocalInference.load(path, 2048, s.threads, 0)
+                    if (!probe.ok) {
+                        rows += BenchmarkRow(0, 0, 0.0, 0, 0, "-", probe.error)
+                        return@withContext
+                    }
+                    layerCount = probe.layers.coerceAtLeast(4)
+                    loadedPath = path
+                    _loadedModel.value = probe.description
+                    val splits = listOf(0, 25, 50, 75, 100)
+                    for (percent in splits) {
+                        val layers = if (percent == 100) 999 else layerCount * percent / 100
+                        val load = LocalInference.load(path, 2048, s.threads, layers)
+                        if (!load.ok) {
+                            rows += BenchmarkRow(layers, percent, 0.0, 0, 0, "-", load.error)
+                            continue
+                        }
+                        loadedBackend = load.backend
+                        val result = LocalInference.generate(
+                            prompt = "Say hello in five short words.",
+                            maxTokens = 32,
+                            temperature = 0.0f,
+                            topP = 1.0f,
+                            topK = 1,
+                            repeatPenalty = 1.0f
+                        ) { }
+                        rows += BenchmarkRow(
+                            layers = if (percent == 100) load.layers else layers,
+                            percent = percent,
+                            tokensPerSecond = result.tokensPerSecond,
+                            promptMs = result.promptMs,
+                            genMs = result.genMs,
+                            backend = load.backend,
+                            error = if (result.ok) null else result.error
+                        )
+                        _benchmark.value = rows.toList()
+                    }
+                }
+                _status.value = "Benchmark fertig: ${rows.count { it.error == null }} Messungen, ${layerCount} Layer"
+            } catch (t: Throwable) {
+                _status.value = "Benchmark fehlgeschlagen: ${t.message}"
+            } finally {
+                _benchmark.value = rows.toList()
+                _benchmarkBusy.value = false
+            }
+        }
+    }
+
     fun runNnapiProbe() {
         if (_npuProbeBusy.value) return
         _npuProbeBusy.value = true
@@ -140,8 +258,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val o = JSONObject(result)
                 buildString {
                     appendLine(if (o.optBoolean("ok")) "Ausfuehrung: OK" else "Fehler: ${o.optString("error")}")
+                    if (!o.optBoolean("npu", o.optBoolean("ok"))) {
+                        appendLine("NPU: nicht exponiert (${o.optString("reason", "unbekannt")})")
+                    }
                     appendLine("Gewaehlt: ${o.optString("chosen")} (${o.optString("chosenType")})")
-                    appendLine("Latenz: ${"%.2f".format(o.optDouble("latencyMs"))} ms")
+                    if (o.has("latencyMs")) appendLine("Latenz: ${"%.2f".format(o.optDouble("latencyMs"))} ms")
                     val out = o.optJSONArray("output")
                     if (out != null) {
                         val values = (0 until out.length()).joinToString(", ") { "%.0f".format(out.optDouble(it)) }
@@ -162,6 +283,94 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             _npuProbeBusy.value = false
         }
     }
+
+    /** Debug hook for the missing-model error path. */
+    fun setDebugEnnModelPath(path: String?) {
+        debugEnnModelPath = path
+    }
+
+    /**
+     * Samsung ENN is the vendor's public NPU API on Exynos. It is loaded
+     * dynamically from the public vendor library; .nnc models come from the
+     * official exynos-eco samples (e.g. Real-ESRGAN x4).
+     */
+    fun runEnnProbe() {
+        if (_ennBusy.value) return
+        _ennBusy.value = true
+        _ennBenchmark.value = null
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = LocalInference.ennProbe()
+            _ennProbe.value = prettyEnnReport(result)
+            _ennBusy.value = false
+        }
+    }
+
+    fun runEnnBenchmark() {
+        if (_ennBusy.value) return
+        val model = resolveEnnModel()
+        if (model == null) {
+            _ennBenchmark.value = "Kein .nnc-Modell gefunden.\n\nErwartet: " +
+                "/vendor/etc/midas/SRIBMidas_aiUPSCALER_4X_V210_FP16_rose.nnc " +
+                "oder Android/data/com.galaxya56.ai/files/models/*.nnc"
+            return
+        }
+        _ennBusy.value = true
+        _ennBenchmark.value = "Lade ${model.name} …"
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = LocalInference.ennBenchmark(model.absolutePath)
+            _ennBenchmark.value = prettyEnnReport(result)
+            _ennBusy.value = false
+        }
+    }
+
+    private fun resolveEnnModel(): File? {
+        debugEnnModelPath?.let { return File(it) }
+        // The device ships this MIDAS 4x model specifically for S5E8845/S5E8855
+        // (Exynos 1380/1580), compiled for the same NCP 26 NPU driver.
+        val midas = File("/vendor/etc/midas/SRIBMidas_aiUPSCALER_4X_V210_FP16_rose.nnc")
+        if (midas.exists()) return midas
+        val app = getApplication<Application>()
+        val dirs = listOfNotNull(app.getExternalFilesDir(null), app.filesDir)
+        for (dir in dirs) {
+            val models = File(dir, "models")
+            models.listFiles()?.firstOrNull { it.isFile && it.name.endsWith(".nnc", true) }
+                ?.let { return it }
+        }
+        return null
+    }
+
+    private fun prettyEnnReport(raw: String): String = runCatching {
+        val o = JSONObject(raw)
+        buildString {
+            if (o.optBoolean("ok") && o.optBoolean("available")) {
+                appendLine("ENN: verfügbar")
+                if (o.optString("framework").isNotBlank()) appendLine("Framework: ${o.optString("framework")}")
+                if (o.optString("unifiedFw").isNotBlank()) appendLine("Unified FW: ${o.optString("unifiedFw")}")
+                if (o.optString("npuFw").isNotBlank()) appendLine("NPU-FW: ${o.optString("npuFw")}")
+                if (o.has("perfMode")) appendLine("Perf-Modus: ${o.optInt("perfMode")}")
+            } else if (!o.optBoolean("ok")) {
+                appendLine("ENN: Fehler")
+                if (o.has("stage")) appendLine("Stage: ${o.optString("stage")} (Code ${o.optInt("code")})")
+                appendLine(o.optString("error", raw))
+            }
+            if (o.has("execMs")) {
+                appendLine()
+                appendLine("Modell: ${o.optString("model")}")
+                if (o.optString("nnc").isNotBlank()) appendLine("NNC: ${o.optString("nnc")}")
+                if (o.optString("npuCompiler").isNotBlank()) appendLine("NPU-Compiler: ${o.optString("npuCompiler")}")
+                appendLine("Laden: ${o.optLong("loadMs")} ms · Ausführen: ${o.optLong("execMs")} ms")
+                appendLine("Buffer: ${o.optInt("nIn")} in / ${o.optInt("nOut")} out")
+                o.optJSONObject("input")?.let { bi ->
+                    appendLine("Input: ${bi.optInt("width")}×${bi.optInt("height")}×${bi.optInt("channel")} · ${bi.optInt("size")} B")
+                }
+                o.optJSONObject("output")?.let { bo ->
+                    appendLine("Output: ${bo.optInt("width")}×${bo.optInt("height")}×${bo.optInt("channel")} · ${bo.optInt("size")} B")
+                }
+                appendLine("Checksum: ${o.optLong("checksum")} · ${o.optLong("nonZero")} Nicht-Null-Bytes")
+                if (o.optBoolean("ok")) appendLine("→ echte ENN-Ausführung auf dem Gerät")
+            }
+        }.trim()
+    }.getOrDefault(raw)
 
     fun enableAdultContent(confirmed: Boolean) {
         updateSettings { it.copy(adultConfirmed = confirmed, nsfwEnabled = confirmed) }
@@ -460,12 +669,175 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Real local txt2img through stable-diffusion.cpp (Vulkan or CPU). */
+    fun generateLocalImage(prompt: String, negative: String) {
+        if (prompt.isBlank() || _studioBusy.value) return
+        val s = settings.value
+        val model = s.imageModelPath.ifBlank {
+            installed.value.firstOrNull {
+                !it.isLora && it.file.name.let { name ->
+                    name.endsWith(".gguf", true) || name.endsWith(".safetensors", true)
+                } && it.file.name.let { name ->
+                    name.contains("sd15", true) || name.contains("stable-diffusion", true) ||
+                        name.contains("sd-turbo", true) || name.contains("sdturbo", true)
+                }
+            }?.file?.absolutePath.orEmpty()
+        }
+        if (model.isBlank()) {
+            _studioError.value = "Kein lokales Diffusionsmodell gefunden. SD1.5-GGUF im Modelle-Tab herunterladen oder in Einstellungen → Studio eintragen."
+            return
+        }
+        val output = File(modelStore.outputDir, "sd_${System.currentTimeMillis()}.png")
+        _studioBusy.value = true
+        _studioError.value = null
+        viewModelScope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    if (loadedImagePath != model) {
+                        val load = LocalInference.imageLoad(model, s.threads.coerceAtMost(4))
+                        if (!load.ok) throw IllegalStateException(load.error.ifBlank { "Modell konnte nicht geladen werden" })
+                        loadedImagePath = model
+                        _localImageModel.value = "${load.model} · ${if (load.videoSupport) "Bild+Video" else "Bild"} · ${load.loadMs} ms"
+                    }
+                    val result = LocalInference.imageGenerate(
+                        prompt = prompt,
+                        negativePrompt = negative,
+                        width = s.imageWidth,
+                        height = s.imageHeight,
+                        steps = s.imageSteps,
+                        cfg = s.imageCfg,
+                        vaeTiling = s.imageVaeTiling,
+                        seed = -1,
+                        outputPath = output.absolutePath
+                    )
+                    if (!result.ok) throw IllegalStateException(result.error.ifBlank { "Generierung fehlgeschlagen" })
+                    val mode = if (model.contains("turbo", true)) "Turbo" else "SD"
+                    _status.value = "$mode lokal: ${result.width}x${result.height} in ${result.ms / 1000.0}s"
+                    File(result.path.ifBlank { output.absolutePath })
+                }
+                _studioImage.value = file
+            } catch (t: Throwable) {
+                _studioError.value = t.message
+            } finally {
+                _studioBusy.value = false
+            }
+        }
+    }
+
+    /** 4x upscale of the current studio image with the on-device MIDAS NPU model. */
+    fun upscaleStudioImage() {
+        android.util.Log.d("A56AI-UI", "upscaleStudioImage entered busy=${_studioBusy.value} image=${_studioImage.value?.absolutePath}")
+        val source = _studioImage.value
+        if (source == null) {
+            _studioError.value = "Erst ein Bild erzeugen oder laden."
+            return
+        }
+        if (_studioBusy.value) return
+        val model = resolveEnnModel()
+        if (model == null || !model.isFile) {
+            _studioError.value = "ENN-Modell fehlt: ${model?.absolutePath ?: "MIDAS .nnc"}"
+            return
+        }
+        val output = File(modelStore.outputDir, "npu_upscale_${System.currentTimeMillis()}.png")
+        _studioBusy.value = true
+        _studioError.value = null
+        android.util.Log.d("A56AI-UI", "NPU upscale busy=true model=${model.absolutePath}")
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    LocalInference.ennUpscale(
+                        source.absolutePath, output.absolutePath, model.absolutePath
+                    )
+                }
+                val o = JSONObject(result)
+                if (!o.optBoolean("ok")) {
+                    throw IllegalStateException(o.optString("error", "NPU-Upscale fehlgeschlagen"))
+                }
+                _studioImage.value = File(o.optString("path", output.absolutePath))
+                _status.value = "NPU 4×: ${o.optInt("width")}×${o.optInt("height")} in ${o.optLong("ms")} ms"
+            } catch (t: Throwable) {
+                _studioError.value = t.message
+            } finally {
+                _studioBusy.value = false
+                android.util.Log.d("A56AI-UI", "NPU upscale busy=false error=${_studioError.value}")
+            }
+        }
+    }
+
+    /** Debug automation hook: stage an existing image for the Studio NPU test. */
+    fun setStudioImage(path: String) {
+        val file = File(path)
+        android.util.Log.d("A56AI-UI", "setStudioImage path=$path exists=${file.exists()} canRead=${file.canRead()}")
+        if (!file.exists()) {
+            _studioError.value = "Bild nicht gefunden: $path"
+            return
+        }
+        _studioImage.value = file
+        _studioError.value = null
+    }
+
     fun clearStudioImage() {
         _studioImage.value = null
         _studioError.value = null
     }
 
     // ------------------------------------------------------------------ model browser
+
+    /**
+     * Discovery is intentionally unfiltered except for the adult gate: the
+     * catalog returns NSFW, abliterated and uncensored models and the user
+     * decides which sources/categories to display.
+     */
+    fun discover(query: String, kind: DiscoveryKind, source: ModelSource?) {
+        val allowNsfw = settings.value.nsfwEnabled && settings.value.adultConfirmed
+        _discovery.value = _discovery.value.copy(
+            query = query,
+            kind = kind,
+            source = source,
+            loading = true,
+            error = null
+        )
+        viewModelScope.launch {
+            val results = discoveryRepo.search(query, kind, source, allowNsfw)
+            // Ignore a stale response when the user typed/changed filters while
+            // the previous request was still running.
+            val state = _discovery.value
+            if (state.query != query || state.kind != kind || state.source != source) return@launch
+            val visible = results.filter { allowNsfw || !it.nsfw }
+            _discovery.value = state.copy(
+                loading = false,
+                results = visible,
+                error = if (results.isEmpty()) {
+                    "Keine Treffer. Quelle prüfen, Suchbegriff ändern oder Token hinterlegen."
+                } else null
+            )
+        }
+    }
+
+    fun openDiscoverySheet(model: DiscoveryModel) {
+        _discoverySheet.value = model
+    }
+
+    fun closeDiscoverySheet() {
+        _discoverySheet.value = null
+    }
+
+    fun downloadDiscovery(model: DiscoveryModel, file: RemoteFile) {
+        val url = if (model.source == ModelSource.CIVITAI) modelStore.civitaiDownloadUrl(file) else file.url
+        modelStore.download(
+            id = "${model.id}:${file.name}",
+            displayName = file.name,
+            url = url,
+            fileName = file.name,
+            isLora = model.isLora || file.name.contains("lora", true)
+        )
+    }
+
+    fun selectImageModel(path: String) {
+        loadedImagePath = ""
+        _localImageModel.value = null
+        updateSettings { it.copy(imageModelPath = path) }
+    }
 
     fun searchRemote(query: String, source: ModelSource, loraOnly: Boolean) {
         _remote.value = _remote.value.copy(query = query, source = source, loraOnly = loraOnly, loading = true, error = null)

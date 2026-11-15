@@ -4,7 +4,9 @@
 
 #include <string>
 
+#include "enn_engine.h"
 #include "hardware_detector.h"
+#include "image_engine.h"
 #include "llama_engine.h"
 #include "npu_probe.h"
 
@@ -153,6 +155,74 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeNnapiProbe(JNIEnv* env, job
     const std::string json = galaxya56::nnapiProbeJson();
     LOGI("NNAPI probe: %s", json.c_str());
     return stringToJstring(env, json);
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeEnnProbe(JNIEnv* env, jobject) {
+    const std::string json = galaxya56::EnnEngine::instance().probeJson();
+    LOGI("ENN probe: %s", json.c_str());
+    return stringToJstring(env, json);
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeEnnBenchmark(
+        JNIEnv* env, jobject, jstring path) {
+    const std::string modelPath = jstringToString(env, path);
+    LOGI("ENN benchmark: %s", modelPath.c_str());
+    return stringToJstring(env,
+        galaxya56::EnnEngine::instance().benchmarkJson(modelPath));
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeEnnUpscale(
+        JNIEnv* env, jobject, jstring inputPath, jstring outputPath, jstring modelPath) {
+    const std::string in = jstringToString(env, inputPath);
+    const std::string out = jstringToString(env, outputPath);
+    const std::string model = jstringToString(env, modelPath);
+    LOGI("ENN upscale: %s -> %s (model %s)", in.c_str(), out.c_str(), model.c_str());
+    return stringToJstring(env,
+        galaxya56::EnnEngine::instance().upscaleJson(in, out, model));
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeImageLoad(
+        JNIEnv* env, jobject, jstring path, jint threads) {
+    const std::string modelPath = jstringToString(env, path);
+    LOGI("Loading diffusion model %s (threads=%d)", modelPath.c_str(), threads);
+    return stringToJstring(env,
+        galaxya56::ImageEngine::instance().loadModel(modelPath, threads));
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeImageUnload(JNIEnv* env, jobject) {
+    return stringToJstring(env, galaxya56::ImageEngine::instance().unload());
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeImageStatus(JNIEnv* env, jobject) {
+    return stringToJstring(env, galaxya56::ImageEngine::instance().statusJson());
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeImageGenerate(
+        JNIEnv* env, jobject, jstring prompt, jstring negativePrompt, jint width, jint height,
+        jint steps, jfloat cfg, jboolean vaeTiling, jlong seed, jstring outputPath) {
+    galaxya56::ImageGenParams params;
+    params.prompt = jstringToString(env, prompt);
+    params.negativePrompt = jstringToString(env, negativePrompt);
+    params.width = width;
+    params.height = height;
+    params.steps = steps;
+    params.cfg = cfg;
+    params.vaeTiling = vaeTiling == JNI_TRUE;
+    params.seed = seed;
+    params.outputPath = jstringToString(env, outputPath);
+    return stringToJstring(env, galaxya56::ImageEngine::instance().generate(params));
+}
+
+JNIEXPORT void JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeImageCancel(JNIEnv*, jobject) {
+    galaxya56::ImageEngine::instance().cancel();
 }
 
 } // extern "C"
