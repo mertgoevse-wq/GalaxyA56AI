@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
@@ -44,10 +45,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.galaxya56.ai.data.Catalog
 import com.galaxya56.ai.data.ModelEntry
+import com.galaxya56.ai.data.ModelHealth
 import com.galaxya56.ai.data.ModelType
 import com.galaxya56.ai.ui.theme.Accent
 import com.galaxya56.ai.ui.theme.AccentSoft
@@ -63,6 +66,7 @@ fun StudioScreen(viewModel: AppViewModel) {
     var prompt by rememberSaveable { mutableStateOf("") }
     var negative by rememberSaveable { mutableStateOf("") }
     var showImageModels by remember { mutableStateOf(false) }
+    var showGallery by remember { mutableStateOf(false) }
 
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val installed by viewModel.installed.collectAsStateWithLifecycle()
@@ -70,6 +74,10 @@ fun StudioScreen(viewModel: AppViewModel) {
     val error by viewModel.studioError.collectAsStateWithLifecycle()
     val image by viewModel.studioImage.collectAsStateWithLifecycle()
     val localImageModel by viewModel.localImageModel.collectAsStateWithLifecycle()
+    val doctor by viewModel.doctor.collectAsStateWithLifecycle()
+    val doctorBusy by viewModel.doctorBusy.collectAsStateWithLifecycle()
+    val lastRecipe by viewModel.lastRecipe.collectAsStateWithLifecycle()
+    val gallery by viewModel.gallery.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
@@ -130,6 +138,46 @@ fun StudioScreen(viewModel: AppViewModel) {
                 }
                 Pill("CFG ${"%.1f".format(settings.imageCfg)}", Surface2)
                 Pill("${settings.imageSteps} Steps", Surface2)
+                Pill(settings.imageSampler, Surface2)
+            }
+            if (doctorBusy) {
+                Text("Modell-Doctor prüft GGUF, RAM und Speicher …", style = MaterialTheme.typography.labelSmall, color = TextMuted, modifier = Modifier.padding(top = 6.dp))
+            }
+            doctor?.let { report ->
+                val color = when (report.health) {
+                    ModelHealth.READY -> Accent
+                    ModelHealth.WARNING -> MaterialTheme.colorScheme.tertiary
+                    ModelHealth.INCOMPATIBLE -> MaterialTheme.colorScheme.error
+                    ModelHealth.UNKNOWN -> TextMuted
+                }
+                Surface(
+                    color = Surface2,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                ) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text("Doctor: ${report.health.name} · ${report.family}", color = color, style = MaterialTheme.typography.labelSmall)
+                        Text(report.reason, style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                        Text(
+                            "${report.sizeMb} MB Modell · ${report.ramFreeMb} MB RAM frei · ${report.storageFreeMb} MB Speicher frei",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextMuted
+                        )
+                        if (report.hash.isNotBlank()) {
+                            Text("Hash ${report.hash.take(16)}…", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                        }
+                        report.recipe?.let { recipe ->
+                            Text(
+                                "Empfehlung: ${recipe.steps} Steps · CFG ${recipe.cfg} · ${recipe.sampler} · ${recipe.width}×${recipe.height}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextMuted
+                            )
+                            if (report.health != ModelHealth.INCOMPATIBLE) {
+                                TextButton(onClick = { viewModel.applyDoctorRecipe(report) }) { Text("Recipe anwenden") }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -148,6 +196,29 @@ fun StudioScreen(viewModel: AppViewModel) {
             )
         )
         if (mode == ModelType.IMAGE) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = if (settings.imageSeed < 0) "" else settings.imageSeed.toString(),
+                    onValueChange = { text ->
+                        val value = text.trim().toLongOrNull() ?: -1L
+                        viewModel.updateSettings { it.copy(imageSeed = value) }
+                    },
+                    label = { Text("Seed (-1 = zufällig)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Surface2,
+                        unfocusedContainerColor = Surface2,
+                        focusedBorderColor = Accent,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    )
+                )
+                OutlinedButton(onClick = { viewModel.updateSettings { it.copy(imageSeed = -1L) } }) {
+                    Text("Zufall")
+                }
+            }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = negative,
@@ -245,11 +316,22 @@ fun StudioScreen(viewModel: AppViewModel) {
                 ) {
                     Text(if (busy) "NPU läuft …" else "NPU 4× Upscale")
                 }
+                OutlinedButton(onClick = { showGallery = true }) { Text("Galerie") }
+                if (lastRecipe != null) {
+                    TextButton(onClick = { viewModel.recreateLastImage() }, enabled = !busy) { Text("Recreate") }
+                }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { openUrl(context, "file://${currentImage.absolutePath}") }) { Text("Datei") }
                 TextButton(onClick = { viewModel.clearStudioImage() }) { Text("Entfernen") }
             }
             Text(currentImage.absolutePath, style = MaterialTheme.typography.labelSmall, color = TextMuted)
+            lastRecipe?.let { recipe ->
+                Text(
+                    "Seed ${recipe.seed} · ${recipe.steps} Steps · CFG ${recipe.cfg} · ${recipe.sampler} · ${recipe.modelName}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextMuted
+                )
+            }
         }
 
         Spacer(Modifier.height(20.dp))
@@ -314,6 +396,54 @@ fun StudioScreen(viewModel: AppViewModel) {
                         Column(Modifier.padding(14.dp)) {
                             Text(model.name, maxLines = 1, fontWeight = FontWeight.SemiBold)
                             Text("${model.sizeMb} MB", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                        }
+                    }
+                }
+                Text("Bild-LoRA", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
+                Surface(
+                    color = if (settings.imageLoraPath.isBlank()) AccentSoft else Surface2,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    onClick = { viewModel.updateSettings { it.copy(imageLoraPath = "") } }
+                ) { Text("Keine LoRA", modifier = Modifier.padding(12.dp)) }
+                installed.filter { it.isLora && (it.name.endsWith(".safetensors", true) || it.name.endsWith(".gguf", true)) }
+                    .forEach { lora ->
+                        Surface(
+                            color = if (settings.imageLoraPath == lora.file.absolutePath) AccentSoft else Surface2,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            onClick = { viewModel.updateSettings { it.copy(imageLoraPath = lora.file.absolutePath) } }
+                        ) { Text(lora.name, modifier = Modifier.padding(12.dp), maxLines = 1) }
+                    }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+
+    if (showGallery) {
+        ModalBottomSheet(onDismissRequest = { showGallery = false }, containerColor = Surface1) {
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                Text("Seed-/Metadaten-Galerie", style = MaterialTheme.typography.titleMedium)
+                if (gallery.isEmpty()) {
+                    Text("Noch keine Bilder mit Metadaten.", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                }
+                gallery.take(20).forEach { item ->
+                    Surface(
+                        color = Surface2,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                    ) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text(item.recipe.prompt.take(90), style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "Seed ${item.recipe.seed} · ${item.recipe.steps} Steps · CFG ${item.recipe.cfg} · ${item.recipe.sampler} · ${item.recipe.modelName}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextMuted
+                            )
+                            Row {
+                                TextButton(onClick = { viewModel.loadStudioImage(item.image); showGallery = false }) { Text("Laden") }
+                                TextButton(onClick = { viewModel.recreateImage(item); showGallery = false }) { Text("Recreate") }
+                            }
                         }
                     }
                 }

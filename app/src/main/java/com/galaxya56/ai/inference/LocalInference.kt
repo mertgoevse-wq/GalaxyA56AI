@@ -25,7 +25,11 @@ data class ImageLoadResult(
     val threads: Int = 0,
     val loadMs: Long = 0,
     val imageSupport: Boolean = false,
-    val videoSupport: Boolean = false
+    val videoSupport: Boolean = false,
+    val backend: String = "CPU",
+    val requestedBackend: String = "auto",
+    val fallback: Boolean = false,
+    val npuDirect: Boolean = false
 )
 
 data class ImageGenerateResult(
@@ -36,6 +40,9 @@ data class ImageGenerateResult(
     val images: Int = 0,
     val ms: Long = 0,
     val seed: Long = -1,
+    val backend: String = "",
+    val sampler: String = "",
+    val lora: String = "",
     val error: String = ""
 )
 
@@ -84,7 +91,7 @@ object LocalInference {
     external fun nativeEnnProbe(): String
     external fun nativeEnnBenchmark(path: String): String
     external fun nativeEnnUpscale(inputPath: String, outputPath: String, modelPath: String): String
-    external fun nativeImageLoad(path: String, threads: Int): String
+    external fun nativeImageLoad(path: String, threads: Int, backendMode: String): String
     external fun nativeImageUnload(): String
     external fun nativeImageStatus(): String
     external fun nativeImageGenerate(
@@ -96,6 +103,9 @@ object LocalInference {
         cfg: Float,
         vaeTiling: Boolean,
         seed: Long,
+        sampler: String,
+        loraPath: String,
+        loraScale: Float,
         outputPath: String
     ): String
     external fun nativeImageCancel()
@@ -185,8 +195,8 @@ object LocalInference {
         )
     }
 
-    fun imageLoad(path: String, threads: Int): ImageLoadResult {
-        val o = JSONObject(nativeImageLoad(path, threads))
+    fun imageLoad(path: String, threads: Int, backendMode: String = "auto"): ImageLoadResult {
+        val o = JSONObject(nativeImageLoad(path, threads, backendMode))
         return ImageLoadResult(
             ok = o.optBoolean("ok"),
             model = o.optString("model"),
@@ -195,7 +205,11 @@ object LocalInference {
             threads = o.optInt("threads"),
             loadMs = o.optLong("loadMs"),
             imageSupport = o.optBoolean("imageSupport"),
-            videoSupport = o.optBoolean("videoSupport")
+            videoSupport = o.optBoolean("videoSupport"),
+            backend = o.optString("backend", "CPU"),
+            requestedBackend = o.optString("requestedBackend", backendMode),
+            fallback = o.optBoolean("fallback"),
+            npuDirect = o.optBoolean("npuDirect")
         )
     }
 
@@ -214,10 +228,16 @@ object LocalInference {
         cfg: Float,
         vaeTiling: Boolean,
         seed: Long,
+        sampler: String,
+        loraPath: String,
+        loraScale: Float,
         outputPath: String
     ): ImageGenerateResult {
         val o = JSONObject(
-            nativeImageGenerate(prompt, negativePrompt, width, height, steps, cfg, vaeTiling, seed, outputPath)
+            nativeImageGenerate(
+                prompt, negativePrompt, width, height, steps, cfg, vaeTiling, seed,
+                sampler, loraPath, loraScale, outputPath
+            )
         )
         return ImageGenerateResult(
             ok = o.optBoolean("ok"),
@@ -227,6 +247,9 @@ object LocalInference {
             images = o.optInt("images"),
             ms = o.optLong("ms"),
             seed = o.optLong("seed", -1),
+            backend = o.optString("backend"),
+            sampler = o.optString("sampler"),
+            lora = o.optString("lora"),
             error = o.optString("error")
         )
     }

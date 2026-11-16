@@ -31,7 +31,12 @@ data class AppSettings(
     val imageHeight: Int = 384,
     val imageSteps: Int = 8,
     val imageCfg: Float = 7.0f,
-    val imageVaeTiling: Boolean = false
+    val imageVaeTiling: Boolean = false,
+    val imageSampler: String = "euler_a",
+    val imageSeed: Long = -1L,
+    val imageLoraPath: String = "",
+    val imageLoraScale: Float = 0.8f,
+    val npuAssist: Boolean = false
 ) {
     val systemPrompt: String
         get() = if (customSystemPrompt.isNotBlank()) customSystemPrompt
@@ -45,12 +50,17 @@ class SettingsStore(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("galaxya56_settings", Context.MODE_PRIVATE)
 
+    private val secure = SecureTokenStore(context)
+
     private val _state = MutableStateFlow(load())
     val state: StateFlow<AppSettings> = _state
 
     val value: AppSettings get() = _state.value
 
-    private fun load(): AppSettings = AppSettings(
+    private fun load(): AppSettings {
+        // One-time move of the old plaintext tokens into the Keystore store.
+        secure.migrateLegacy(prefs)
+        val loaded = AppSettings(
         backend = prefs.getString("backend", "auto") ?: "auto",
         contextSize = prefs.getInt("contextSize", 4096),
         threads = prefs.getInt("threads", 4),
@@ -60,11 +70,11 @@ class SettingsStore(context: Context) {
         repeatPenalty = prefs.getFloat("repeatPenalty", 1.1f),
         systemPromptId = prefs.getString("systemPromptId", "general") ?: "general",
         customSystemPrompt = prefs.getString("customSystemPrompt", "") ?: "",
-        geminiKey = prefs.getString("geminiKey", "") ?: "",
+        geminiKey = secure.get("geminiKey"),
         cloudModel = prefs.getString("cloudModel", "gemini-2.5-flash") ?: "gemini-2.5-flash",
         cloudEnabled = prefs.getBoolean("cloudEnabled", false),
-        hfToken = prefs.getString("hfToken", "") ?: "",
-        civitaiToken = prefs.getString("civitaiToken", "") ?: "",
+        hfToken = secure.get("hfToken"),
+        civitaiToken = secure.get("civitaiToken"),
         nsfwEnabled = prefs.getBoolean("nsfwEnabled", false),
         adultConfirmed = prefs.getBoolean("adultConfirmed", false),
         selectedModelPath = prefs.getString("selectedModelPath", "") ?: "",
@@ -76,8 +86,20 @@ class SettingsStore(context: Context) {
         imageHeight = prefs.getInt("imageHeight", 384),
         imageSteps = prefs.getInt("imageSteps", 8),
         imageCfg = prefs.getFloat("imageCfg", 7.0f),
-        imageVaeTiling = prefs.getBoolean("imageVaeTiling", false)
+        imageVaeTiling = prefs.getBoolean("imageVaeTiling", false),
+        imageSampler = prefs.getString("imageSampler", "euler_a") ?: "euler_a",
+        imageSeed = prefs.getLong("imageSeed", -1L),
+        imageLoraPath = prefs.getString("imageLoraPath", "") ?: "",
+        imageLoraScale = prefs.getFloat("imageLoraScale", 0.8f),
+        npuAssist = prefs.getBoolean("npuAssist", false)
     )
+        android.util.Log.i(
+            "A56AI-SECURE",
+            "secure tokens loaded (lengths): hf=${loaded.hfToken.length} " +
+                "civitai=${loaded.civitaiToken.length} gemini=${loaded.geminiKey.length}"
+        )
+        return loaded
+    }
 
     fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(_state.value)
@@ -92,11 +114,11 @@ class SettingsStore(context: Context) {
             putFloat("repeatPenalty", next.repeatPenalty)
             putString("systemPromptId", next.systemPromptId)
             putString("customSystemPrompt", next.customSystemPrompt)
-            putString("geminiKey", next.geminiKey)
             putString("cloudModel", next.cloudModel)
             putBoolean("cloudEnabled", next.cloudEnabled)
-            putString("hfToken", next.hfToken)
-            putString("civitaiToken", next.civitaiToken)
+            remove("geminiKey")
+            remove("hfToken")
+            remove("civitaiToken")
             putBoolean("nsfwEnabled", next.nsfwEnabled)
             putBoolean("adultConfirmed", next.adultConfirmed)
             putString("selectedModelPath", next.selectedModelPath)
@@ -109,6 +131,15 @@ class SettingsStore(context: Context) {
             putInt("imageSteps", next.imageSteps)
             putFloat("imageCfg", next.imageCfg)
             putBoolean("imageVaeTiling", next.imageVaeTiling)
+            putString("imageSampler", next.imageSampler)
+            putLong("imageSeed", next.imageSeed)
+            putString("imageLoraPath", next.imageLoraPath)
+            putFloat("imageLoraScale", next.imageLoraScale)
+            putBoolean("npuAssist", next.npuAssist)
         }.apply()
+        // Tokens never go into the plaintext preferences file.
+        secure.put("geminiKey", next.geminiKey)
+        secure.put("hfToken", next.hfToken)
+        secure.put("civitaiToken", next.civitaiToken)
     }
 }

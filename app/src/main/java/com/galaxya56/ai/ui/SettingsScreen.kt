@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -104,9 +105,10 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 }
             }
             Text(
-                "llama.cpp-GGUF läuft auf CPU/NEON; mit -Pvulkan=true gebaute APKs offloaden Layer " +
-                    "auf die Xclipse-GPU (GPU-Layer-Regler). Die NPU wird über NNAPI angesprochen; " +
-                    "GGUF-Transformer selbst laufen nicht auf NNAPI.",
+                "Fallback-Kette: NPU (nur kompatible .nnc-Modelle) → Vulkan-GPU → CPU. " +
+                    "GGUF-LLMs und SD-Checkpoints haben keinen stabilen NPU-Backend; sie laufen " +
+                    "daher automatisch auf Vulkan und bei Fehler auf CPU. Die NPU wird für den " +
+                    "MIDAS-4×-Upscaler im Studio genutzt.",
                 style = MaterialTheme.typography.labelSmall,
                 color = TextMuted,
                 modifier = Modifier.padding(top = 6.dp)
@@ -209,6 +211,27 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 steps = 21,
                 onChange = { viewModel.updateSettings { s -> s.copy(imageCfg = it) } }
             )
+            Text("Sampler", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf("euler_a", "euler", "dpm++2m", "lcm").forEach { sampler ->
+                    val selected = settings.imageSampler == sampler
+                    Surface(
+                        color = if (selected) Accent else Surface2,
+                        shape = RoundedCornerShape(50),
+                        onClick = { viewModel.updateSettings { s -> s.copy(imageSampler = sampler) } }
+                    ) {
+                        Text(
+                            sampler,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (selected) com.galaxya56.ai.ui.theme.Ink else TextMuted,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+            }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("VAE-Tiling", style = MaterialTheme.typography.bodySmall)
@@ -224,6 +247,17 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 )
             }
             LabelledValue("Modell", settings.imageModelPath.ifBlank { "auto: SD1.5/SD-Turbo" })
+            LabelledValue("Bild-LoRA", settings.imageLoraPath.ifBlank { "keine" })
+            if (settings.imageLoraPath.isNotBlank()) {
+                SliderRow(
+                    label = "LoRA-Stärke",
+                    value = settings.imageLoraScale,
+                    valueText = "%.2f".format(settings.imageLoraScale),
+                    range = 0f..1.5f,
+                    steps = 15,
+                    onChange = { viewModel.updateSettings { s -> s.copy(imageLoraScale = it) } }
+                )
+            }
         }
 
         SettingsCard("GPU-Layer-Benchmark") {

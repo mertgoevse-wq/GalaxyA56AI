@@ -12,6 +12,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stable-diffusion.cpp/thirdparty/stb_image_write.h"
@@ -98,6 +99,7 @@ struct State {
     std::string path;
     int threads = 4;
     std::string version = "unbekannt";
+    std::string backend = "unbekannt";
     std::atomic<bool> cancelRequested{false};
     std::atomic<int> progressStep{0};
     std::atomic<int> progressSteps{0};
@@ -136,7 +138,7 @@ ImageEngine& ImageEngine::instance() {
     return engine;
 }
 
-std::string ImageEngine::loadModel(const std::string& path, int threads) {
+std::string ImageEngine::loadModel(const std::string& path, int threads, const std::string& backendMode) {
     State& s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
 
@@ -147,67 +149,97 @@ std::string ImageEngine::loadModel(const std::string& path, int threads) {
 
     auto start = std::chrono::steady_clock::now();
     sd_set_log_callback(sdLogCallback, nullptr);
-    sd_ctx_opt_t* opt = sd_ctx_opt_create();
-    if (!opt) {
-        return R"json({"ok":false,"error":"Optik konnte nicht erzeugt werden"})json";
+
+    // stable-diffusion.cpp has no NNAPI/ENN backend. NPU/auto requests are
+    // therefore resolved as Vulkan first, then CPU. This keeps every failure
+    // recoverable and logs exactly which stage ran.
+    const std::string vulkan = preferredBackend();
+    std::vector<std::string> attempts;
+    if (backendMode == "cpu") {
+        attempts.push_back("");
+    } else {
+        if (!vulkan.empty()) attempts.push_back(vulkan);
+        attempts.push_back("");
+    }
+    if (backendMode == "npu") {
+        LOGI("SD NPU direct request denied: no NNAPI/ENN diffusion backend; trying GPU then CPU");
     }
 
-    sd_status_t rc = SD_STATUS_OK;
-    const std::string backend = preferredBackend();
-    if (!backend.empty()) {
-        rc = sd_opt_set_string(opt, "backend", backend.c_str());
-        LOGI("SD backend=%s set rc=%d err=%s", backend.c_str(), (int)rc, sd_get_last_error());
-    }
-    // The segmented graph-cut path crashes in ggml_backend_sched_split_graph
-    // on the Xclipse Vulkan driver for small SD/CLIP graphs. Run one graph.
-    sd_status_t seg_rc = sd_opt_set_bool(opt, "disable_segmented_compute", true);
-    LOGI("SD disable_segmented_compute rc=%d err=%s", (int)seg_rc, sd_get_last_error());
-    if (rc == SD_STATUS_OK) rc = sd_opt_set_string(opt, "model_path", path.c_str());
-    LOGI("SD model_path set rc=%d err=%s", (int)rc, sd_get_last_error());
-    if (rc == SD_STATUS_OK) rc = sd_opt_set_int(opt, "n_threads", threads > 0 ? threads : 4);
-    if (rc == SD_STATUS_OK) rc = sd_opt_set_bool(opt, "enable_mmap", true);
-
-    // Distilled Turbo checkpoints are v-prediction models. Old conversions of
-    // sd-turbo.gguf have no metadata, so sd.cpp's weight probe can miss this
-    // and fall back to eps-prediction, which produces blur/noise.
     std::string lowered = path;
     std::transform(lowered.begin(), lowered.end(), lowered.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (lowered.find("turbo") != std::string::npos) {
-        sd_status_t pred_rc = sd_opt_set_string(opt, "prediction", "v");
-        LOGI("SD turbo checkpoint: force v-prediction rc=%d err=%s", (int)pred_rc, sd_get_last_error());
-    }
 
     sd_ctx_t* ctx = nullptr;
-    if (rc == SD_STATUS_OK) rc = sd_ctx_create(opt, &ctx);
-    const std::string error = rc == SD_STATUS_OK ? "" : lastError();
-    sd_opt_free(opt);
+    sd_status_t rc = SD_STATUS_LOAD_FAILED;
+    std::string error;
+    std::string backendLabel;
+    bool fallback = false;
+
+    for (size_t attempt = 0; attempt < attempts.size(); ++attempt) {
+        const std::string requested = attempts[attempt];
+        sd_ctx_opt_t* opt = sd_ctx_opt_create();
+        if (!opt) {
+            error = "Optik konnte nicht erzeugt werden";
+            break;
+        }
+        rc = SD_STATUS_OK;
+        if (!requested.empty()) {
+            rc = sd_opt_set_string(opt, "backend", requested.c_str());
+            LOGI("SD attempt backend=%s set rc=%d err=%s", requested.c_str(), (int)rc, sd_get_last_error());
+        } else {
+            LOGI("SD attempt backend=CPU/default");
+        }
+        sd_status_t seg_rc = sd_opt_set_bool(opt, "disable_segmented_compute", true);
+        LOGI("SD disable_segmented_compute rc=%d err=%s", (int)seg_rc, sd_get_last_error());
+        if (rc == SD_STATUS_OK) rc = sd_opt_set_string(opt, "model_path", path.c_str());
+        if (rc == SD_STATUS_OK) rc = sd_opt_set_int(opt, "n_threads", threads > 0 ? threads : 4);
+        if (rc == SD_STATUS_OK) rc = sd_opt_set_bool(opt, "enable_mmap", true);
+        if (rc == SD_STATUS_OK && lowered.find("turbo") != std::string::npos) {
+            sd_status_t pred_rc = sd_opt_set_string(opt, "prediction", "v");
+            LOGI("SD turbo checkpoint: force v-prediction rc=%d err=%s", (int)pred_rc, sd_get_last_error());
+        }
+        ctx = nullptr;
+        if (rc == SD_STATUS_OK) rc = sd_ctx_create(opt, &ctx);
+        error = rc == SD_STATUS_OK ? "" : lastError();
+        sd_opt_free(opt);
+        if (rc == SD_STATUS_OK && ctx) {
+            backendLabel = requested.empty() ? "CPU (NEON)" : requested;
+            fallback = attempt > 0;
+            break;
+        }
+        if (ctx) { sd_ctx_free(ctx); ctx = nullptr; }
+        LOGE("SD load attempt %zu failed: %s", attempt + 1, error.c_str());
+    }
 
     if (rc != SD_STATUS_OK || !ctx) {
-        if (ctx) sd_ctx_free(ctx);
-        LOGE("SD load failed: %s", error.c_str());
+        LOGE("SD load failed after %zu attempt(s): %s", attempts.size(), error.c_str());
         std::ostringstream json;
         json << "{\"ok\":false,\"status\":\"" << statusName(rc) << "\",\"error\":\""
-             << jsonEscape(error) << "\"}";
+             << jsonEscape(error) << "\",\"requestedBackend\":\"" << jsonEscape(backendMode) << "\"}";
         return json.str();
     }
 
     s.ctx = ctx;
     s.path = path;
     s.threads = threads;
+    s.backend = backendLabel;
     const char* version = sd_get_model_version_name(ctx);
     s.version = version ? version : "unbekannt";
     sd_set_progress_callback(progressCallback, nullptr);
 
     auto end = std::chrono::steady_clock::now();
     const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    LOGI("SD model loaded: %s (%s) in %lld ms", s.version.c_str(), path.c_str(), ms);
+    LOGI("SD model loaded: %s (%s) on %s in %lld ms (fallback=%d)", s.version.c_str(), path.c_str(), s.backend.c_str(), ms, fallback ? 1 : 0);
 
     std::ostringstream json;
     json << "{\"ok\":true,\"model\":\"" << jsonEscape(s.version)
          << "\",\"path\":\"" << jsonEscape(path)
          << "\",\"threads\":" << s.threads
          << ",\"loadMs\":" << ms
+         << ",\"backend\":\"" << jsonEscape(s.backend)
+         << "\",\"requestedBackend\":\"" << jsonEscape(backendMode)
+         << "\",\"fallback\":" << (fallback ? "true" : "false")
+         << ",\"npuDirect\":false"
          << ",\"imageSupport\":" << (sd_ctx_supports_image_generation(ctx) ? "true" : "false")
          << ",\"videoSupport\":" << (sd_ctx_supports_video_generation(ctx) ? "true" : "false")
          << "}";
@@ -223,6 +255,7 @@ std::string ImageEngine::unload() {
     }
     s.path.clear();
     s.version = "unbekannt";
+    s.backend = "unbekannt";
     return R"json({"ok":true})json";
 }
 
@@ -233,6 +266,7 @@ std::string ImageEngine::statusJson() {
     json << "{\"loaded\":" << (s.ctx ? "true" : "false")
          << ",\"path\":\"" << jsonEscape(s.path)
          << "\",\"model\":\"" << jsonEscape(s.version)
+         << "\",\"backend\":\"" << jsonEscape(s.backend)
          << "\",\"threads\":" << s.threads
          << ",\"progressStep\":" << s.progressStep.load()
          << ",\"progressSteps\":" << s.progressSteps.load() << "}";
@@ -262,10 +296,22 @@ std::string ImageEngine::generate(const ImageGenParams& params) {
     if (rc == SD_STATUS_OK) rc = sd_opt_set_int(opt, "width", params.width);
     if (rc == SD_STATUS_OK) rc = sd_opt_set_int(opt, "height", params.height);
     if (rc == SD_STATUS_OK) rc = sd_opt_set_int(opt, "sample.steps", params.steps);
+    if (rc == SD_STATUS_OK && !params.sampler.empty()) {
+        rc = sd_opt_set_string(opt, "sample.method", params.sampler.c_str());
+    }
     if (rc == SD_STATUS_OK) rc = sd_opt_set_float(opt, "sample.guidance.txt_cfg", params.cfg);
     if (rc == SD_STATUS_OK) rc = sd_opt_set_bool(opt, "vae_tiling.enabled", params.vaeTiling);
     if (rc == SD_STATUS_OK) rc = sd_opt_set_int(opt, "seed", params.seed);
     if (rc == SD_STATUS_OK) rc = sd_opt_set_int(opt, "batch_count", 1);
+    if (rc == SD_STATUS_OK && !params.loraPath.empty()) {
+        sd_lora_t lora{};
+        lora.is_high_noise = false;
+        lora.multiplier = params.loraScale;
+        lora.path = params.loraPath.c_str();
+        rc = sd_opt_set_loras(opt, "loras", &lora, 1);
+        LOGI("SD image LoRA %s scale=%.2f rc=%d", params.loraPath.c_str(), params.loraScale, (int)rc);
+    }
+    LOGI("SD generate backend=%s sampler=%s steps=%d cfg=%.2f seed=%lld", s.backend.c_str(), params.sampler.c_str(), params.steps, params.cfg, params.seed);
 
     sd_result_t* result = nullptr;
     const auto start = std::chrono::steady_clock::now();
@@ -316,8 +362,6 @@ std::string ImageEngine::generate(const ImageGenParams& params) {
         ++written;
     }
 
-    const char* info = count > 0 ? sd_result_get_generation_info(result, 0) : nullptr;
-    const std::string infoCopy = info ? info : "";
     sd_result_free(result);
 
     if (written == 0) {
@@ -330,8 +374,12 @@ std::string ImageEngine::generate(const ImageGenParams& params) {
          << ",\"width\":" << outWidth << ",\"height\":" << outHeight
          << ",\"ms\":" << ms
          << ",\"seed\":" << params.seed
-         << ",\"path\":\"" << jsonEscape(params.outputPath)
-         << "\",\"info\":\"" << jsonEscape(infoCopy) << "\"}";
+         << ",\"backend\":\"" << jsonEscape(s.backend)
+         << "\",\"sampler\":\"" << jsonEscape(params.sampler)
+         << "\",\"lora\":\"" << jsonEscape(params.loraPath)
+         << "\",\"path\":\"" << jsonEscape(params.outputPath)
+         << "\"}";
+    LOGI("SD result JSON (%zu chars): %s", json.str().size(), json.str().c_str());
     return json.str();
 }
 

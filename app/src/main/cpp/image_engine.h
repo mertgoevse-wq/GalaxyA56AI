@@ -13,6 +13,9 @@ struct ImageGenParams {
     float cfg = 7.0f;
     bool vaeTiling = false;
     long long seed = -1;
+    std::string sampler = "euler_a";
+    std::string loraPath;
+    float loraScale = 0.8f;
     std::string outputPath;
 };
 
@@ -20,7 +23,7 @@ class ImageEngine {
 public:
     static ImageEngine& instance();
 
-    std::string loadModel(const std::string& path, int threads);
+    std::string loadModel(const std::string& path, int threads, const std::string& backendMode);
     std::string unload();
     std::string statusJson();
     std::string generate(const ImageGenParams& params);

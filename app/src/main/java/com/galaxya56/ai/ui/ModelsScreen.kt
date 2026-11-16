@@ -65,6 +65,7 @@ import com.galaxya56.ai.data.AppSettings
 import com.galaxya56.ai.data.Catalog
 import com.galaxya56.ai.data.DiscoveryKind
 import com.galaxya56.ai.data.DiscoveryModel
+import com.galaxya56.ai.data.ModelDoctor
 import com.galaxya56.ai.data.DownloadStatus
 import com.galaxya56.ai.data.InstalledModel
 import com.galaxya56.ai.data.ModelEntry
@@ -513,6 +514,14 @@ private fun DiscoverySheet(
                 style = MaterialTheme.typography.labelSmall,
                 color = TextMuted,
                 modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+        ModelDoctor.remoteAdvice(model.name, model.baseModel)?.let { advice ->
+            Text(
+                "Doctor-Empfehlung: $advice",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (advice.startsWith("Turbo")) MaterialTheme.colorScheme.tertiary else Accent,
+                modifier = Modifier.padding(top = 6.dp)
             )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 10.dp))

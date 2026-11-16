@@ -186,11 +186,12 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeEnnUpscale(
 
 JNIEXPORT jstring JNICALL
 Java_com_galaxya56_ai_inference_LocalInference_nativeImageLoad(
-        JNIEnv* env, jobject, jstring path, jint threads) {
+        JNIEnv* env, jobject, jstring path, jint threads, jstring backendMode) {
     const std::string modelPath = jstringToString(env, path);
-    LOGI("Loading diffusion model %s (threads=%d)", modelPath.c_str(), threads);
+    const std::string backend = jstringToString(env, backendMode);
+    LOGI("Loading diffusion model %s (threads=%d backend=%s)", modelPath.c_str(), threads, backend.c_str());
     return stringToJstring(env,
-        galaxya56::ImageEngine::instance().loadModel(modelPath, threads));
+        galaxya56::ImageEngine::instance().loadModel(modelPath, threads, backend));
 }
 
 JNIEXPORT jstring JNICALL
@@ -206,7 +207,8 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeImageStatus(JNIEnv* env, jo
 JNIEXPORT jstring JNICALL
 Java_com_galaxya56_ai_inference_LocalInference_nativeImageGenerate(
         JNIEnv* env, jobject, jstring prompt, jstring negativePrompt, jint width, jint height,
-        jint steps, jfloat cfg, jboolean vaeTiling, jlong seed, jstring outputPath) {
+        jint steps, jfloat cfg, jboolean vaeTiling, jlong seed, jstring sampler,
+        jstring loraPath, jfloat loraScale, jstring outputPath) {
     galaxya56::ImageGenParams params;
     params.prompt = jstringToString(env, prompt);
     params.negativePrompt = jstringToString(env, negativePrompt);
@@ -216,6 +218,9 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeImageGenerate(
     params.cfg = cfg;
     params.vaeTiling = vaeTiling == JNI_TRUE;
     params.seed = seed;
+    params.sampler = jstringToString(env, sampler);
+    params.loraPath = jstringToString(env, loraPath);
+    params.loraScale = loraScale;
     params.outputPath = jstringToString(env, outputPath);
     return stringToJstring(env, galaxya56::ImageEngine::instance().generate(params));
 }

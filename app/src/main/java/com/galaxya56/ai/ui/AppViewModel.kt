@@ -9,13 +9,17 @@ import com.galaxya56.ai.data.DownloadState
 import com.galaxya56.ai.data.InstalledModel
 import com.galaxya56.ai.data.DiscoveryKind
 import com.galaxya56.ai.data.DiscoveryModel
+import com.galaxya56.ai.data.ImageMetadataStore
 import com.galaxya56.ai.data.ModelDiscovery
+import com.galaxya56.ai.data.ModelDoctor
+import com.galaxya56.ai.data.ModelDoctorReport
 import com.galaxya56.ai.data.ModelEntry
 import com.galaxya56.ai.data.ModelSource
 import com.galaxya56.ai.data.ModelStore
 import com.galaxya56.ai.data.RemoteFile
 import com.galaxya56.ai.data.RemoteModel
 import com.galaxya56.ai.data.SettingsStore
+import com.galaxya56.ai.data.StudioRecipe
 import com.galaxya56.ai.inference.GeminiClient
 import com.galaxya56.ai.inference.HardwareInfo
 import com.galaxya56.ai.inference.LocalInference
@@ -30,6 +34,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import kotlin.random.Random
 
 enum class Role { USER, ASSISTANT, SYSTEM }
 
@@ -67,6 +72,8 @@ data class RemoteSearchState(
     val results: List<RemoteModel> = emptyList(),
     val error: String? = null
 )
+
+data class GalleryItem(val image: File, val recipe: StudioRecipe)
 
 data class DiscoveryState(
     val query: String = "",
@@ -137,6 +144,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val fileSheet: StateFlow<RemoteModel?> = _fileSheet
 
     private val discoveryRepo = ModelDiscovery(settingsStore)
+    private val modelDoctor = ModelDoctor(application)
+    private val _doctor = MutableStateFlow<ModelDoctorReport?>(null)
+    val doctor: StateFlow<ModelDoctorReport?> = _doctor
+    private val _doctorBusy = MutableStateFlow(false)
+    val doctorBusy: StateFlow<Boolean> = _doctorBusy
+    private val _lastRecipe = MutableStateFlow<StudioRecipe?>(null)
+    val lastRecipe: StateFlow<StudioRecipe?> = _lastRecipe
+    private val _gallery = MutableStateFlow<List<GalleryItem>>(emptyList())
+    val gallery: StateFlow<List<GalleryItem>> = _gallery
     private val _discovery = MutableStateFlow(DiscoveryState())
     val discovery: StateFlow<DiscoveryState> = _discovery
     private val _discoverySheet = MutableStateFlow<DiscoveryModel?>(null)
@@ -161,6 +177,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         loadConversations()
+        loadGallery()
+        settings.value.imageModelPath.takeIf { it.isNotBlank() }?.let { inspectImageModel(it) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { _hardware.value = LocalInference.hardware() }
                 .onFailure { _status.value = "Native Hardware-Probe nicht verfügbar: ${it.message}" }
@@ -491,9 +509,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val threads = s.threads.coerceIn(1, (_hardware.value.cpuCores.takeIf { c -> c > 0 } ?: 4))
+        val requestedLayers = requestedGpuLayers(s)
+        if (s.backend == "npu") {
+            android.util.Log.i("A56AI-BACKEND", "LLM: NPU direct unavailable; fallback chain GPU -> CPU")
+        }
         if (loadedPath != path) {
             _status.value = "Lade Modell …"
-            val result = withContext(Dispatchers.IO) { LocalInference.load(path, s.contextSize, threads, s.gpuLayers) }
+            val result = loadWithFallback(path, s, threads)
             if (!result.ok) {
                 updateMessage(conversationId, messageId) {
                     it.copy(text = "Modell konnte nicht geladen werden: ${result.error}", error = true)
@@ -503,7 +525,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             loadedPath = path
             loadedBackend = result.backend
             _loadedModel.value = result.description
-            _status.value = "Modell geladen · ${result.context} Tokens Kontext"
+            android.util.Log.i(
+                "A56AI-BACKEND",
+                "LLM loaded backend=${result.backend} requestedLayers=$requestedLayers mode=${s.backend}"
+            )
+            _status.value = "Modell geladen · ${result.context} Tokens Kontext · ${result.backend}"
         }
 
         val prompt = PromptBuilder.build(s.systemPrompt, conversationHistory(conversationId, messageId), path)
@@ -583,6 +609,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             ?: emptyList()
     }
 
+    /** auto/gpu/npu map to all layers when Vulkan exists; an explicit CPU choice wins. */
+    private fun requestedGpuLayers(s: AppSettings): Int {
+        if (s.backend == "cpu") return 0
+        val hasGpu = _hardware.value.gpu.isNotBlank() && _hardware.value.gpu != "unbekannt"
+        if (!hasGpu) return 0
+        return if (s.gpuLayers > 0) s.gpuLayers else 999
+    }
+
+    /** GPU first, then a real CPU retry if the Vulkan context could not load. */
+    private suspend fun loadWithFallback(path: String, s: AppSettings, threads: Int): com.galaxya56.ai.inference.LoadResult {
+        val layers = requestedGpuLayers(s)
+        var result = withContext(Dispatchers.IO) { LocalInference.load(path, s.contextSize, threads, layers) }
+        if (!result.ok && layers > 0) {
+            android.util.Log.w("A56AI-BACKEND", "LLM GPU load failed (${result.error}); retrying CPU")
+            result = withContext(Dispatchers.IO) { LocalInference.load(path, s.contextSize, threads, 0) }
+        }
+        return result
+    }
+
     private fun resolveModelPath(s: AppSettings): String {
         if (s.selectedModelPath.isNotBlank() && File(s.selectedModelPath).exists()) return s.selectedModelPath
         return modelStore.installed.value.firstOrNull { !it.isLora && it.name.endsWith(".gguf", true) }
@@ -602,9 +647,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val s = settings.value
             _status.value = "Lade Modell …"
-            val result = withContext(Dispatchers.IO) {
-                LocalInference.load(path, s.contextSize, s.threads, s.gpuLayers)
-            }
+            val result = loadWithFallback(path, s, s.threads)
             if (result.ok) {
                 loadedPath = path
                 _loadedModel.value = result.description
@@ -624,7 +667,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val s = settings.value
             if (loadedPath.isBlank()) {
                 val path = resolveModelPath(s)
-                val load = withContext(Dispatchers.IO) { LocalInference.load(path, s.contextSize, s.threads, s.gpuLayers) }
+                val load = loadWithFallback(path, s, s.threads)
                 if (!load.ok) {
                     _status.value = "Erst Modell laden: ${load.error}"
                     return@launch
@@ -692,12 +735,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _studioError.value = null
         viewModelScope.launch {
             try {
+                val seed = if (s.imageSeed >= 0L) s.imageSeed else Random.nextLong(1L, Int.MAX_VALUE.toLong())
+                val doctorReport = _doctor.value?.takeIf { it.path == model }
+                    ?: withContext(Dispatchers.IO) { modelDoctor.inspect(File(model), s.imageModelPath) }
+                val modelHash = doctorReport.hash
                 val file = withContext(Dispatchers.IO) {
+                    if (s.backend == "npu") {
+                        android.util.Log.i("A56AI-BACKEND", "SD: NPU direct unavailable; fallback chain GPU -> CPU")
+                    }
                     if (loadedImagePath != model) {
-                        val load = LocalInference.imageLoad(model, s.threads.coerceAtMost(4))
+                        val load = LocalInference.imageLoad(model, s.threads.coerceAtMost(4), s.backend)
                         if (!load.ok) throw IllegalStateException(load.error.ifBlank { "Modell konnte nicht geladen werden" })
                         loadedImagePath = model
-                        _localImageModel.value = "${load.model} · ${if (load.videoSupport) "Bild+Video" else "Bild"} · ${load.loadMs} ms"
+                        _localImageModel.value = "${load.model} · ${if (load.videoSupport) "Bild+Video" else "Bild"} · ${load.loadMs} ms · ${load.backend}"
+                        android.util.Log.i(
+                            "A56AI-BACKEND",
+                            "SD loaded backend=${load.backend} requested=${load.requestedBackend} fallback=${load.fallback} npuDirect=${load.npuDirect}"
+                        )
                     }
                     val result = LocalInference.imageGenerate(
                         prompt = prompt,
@@ -707,13 +761,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         steps = s.imageSteps,
                         cfg = s.imageCfg,
                         vaeTiling = s.imageVaeTiling,
-                        seed = -1,
+                        seed = seed,
+                        sampler = s.imageSampler,
+                        loraPath = s.imageLoraPath,
+                        loraScale = s.imageLoraScale,
                         outputPath = output.absolutePath
                     )
                     if (!result.ok) throw IllegalStateException(result.error.ifBlank { "Generierung fehlgeschlagen" })
                     val mode = if (model.contains("turbo", true)) "Turbo" else "SD"
-                    _status.value = "$mode lokal: ${result.width}x${result.height} in ${result.ms / 1000.0}s"
-                    File(result.path.ifBlank { output.absolutePath })
+                    val generated = File(result.path.ifBlank { output.absolutePath })
+                    val recipe = StudioRecipe(
+                        prompt = prompt,
+                        negative = negative,
+                        modelPath = model,
+                        modelName = File(model).name,
+                        modelHash = modelHash,
+                        seed = result.seed,
+                        cfg = s.imageCfg,
+                        steps = s.imageSteps,
+                        sampler = result.sampler.ifBlank { s.imageSampler },
+                        width = result.width,
+                        height = result.height,
+                        vaeTiling = s.imageVaeTiling,
+                        loraPath = s.imageLoraPath,
+                        loraScale = s.imageLoraScale,
+                        backend = result.backend,
+                        ms = result.ms
+                    )
+                    ImageMetadataStore.save(generated, recipe)
+                    _lastRecipe.value = recipe
+                    loadGallery()
+                    _status.value = "$mode lokal: ${result.width}x${result.height} in ${result.ms / 1000.0}s · ${result.backend} · Seed ${result.seed}"
+                    android.util.Log.i(
+                        "A56AI-BACKEND",
+                        "SD generate backend=${result.backend} sampler=${result.sampler} seed=${result.seed} lora=${result.lora}"
+                    )
+                    generated
                 }
                 _studioImage.value = file
             } catch (t: Throwable) {
@@ -837,6 +920,68 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         loadedImagePath = ""
         _localImageModel.value = null
         updateSettings { it.copy(imageModelPath = path) }
+        if (path.isNotBlank()) inspectImageModel(path) else _doctor.value = null
+    }
+
+    /** Runs the GGUF/metadata/RAM checks without blocking the Studio UI. */
+    fun inspectImageModel(path: String) {
+        _doctorBusy.value = true
+        viewModelScope.launch {
+            val report = modelDoctor.inspect(File(path), settings.value.imageModelPath)
+            _doctor.value = report
+            _doctorBusy.value = false
+        }
+    }
+
+    fun applyDoctorRecipe(report: ModelDoctorReport) {
+        val recipe = report.recipe ?: return
+        updateSettings {
+            it.copy(
+                imageSteps = recipe.steps,
+                imageCfg = recipe.cfg,
+                imageSampler = recipe.sampler,
+                imageWidth = recipe.width,
+                imageHeight = recipe.height,
+                imageVaeTiling = recipe.vaeTiling
+            )
+        }
+        _status.value = "Recipe angewendet: ${recipe.steps} Steps, CFG ${recipe.cfg}, ${recipe.sampler}"
+    }
+
+    fun loadGallery() {
+        _gallery.value = ImageMetadataStore.list(modelStore.outputDir)
+            .map { GalleryItem(it.first, it.second) }
+    }
+
+    fun loadStudioImage(file: File) {
+        if (!file.isFile) return
+        _studioImage.value = file
+        _lastRecipe.value = ImageMetadataStore.read(file)
+        _studioError.value = null
+    }
+
+    fun recreateImage(item: GalleryItem) = recreateRecipe(item.recipe)
+
+    fun recreateLastImage() {
+        _lastRecipe.value?.let { recreateRecipe(it) }
+    }
+
+    private fun recreateRecipe(r: StudioRecipe) {
+        updateSettings {
+            it.copy(
+                imageSteps = r.steps,
+                imageCfg = r.cfg,
+                imageSampler = r.sampler,
+                imageWidth = r.width,
+                imageHeight = r.height,
+                imageVaeTiling = r.vaeTiling,
+                imageSeed = r.seed,
+                imageLoraPath = r.loraPath,
+                imageLoraScale = r.loraScale,
+                imageModelPath = r.modelPath
+            )
+        }
+        generateLocalImage(r.prompt, r.negative)
     }
 
     fun searchRemote(query: String, source: ModelSource, loraOnly: Boolean) {
