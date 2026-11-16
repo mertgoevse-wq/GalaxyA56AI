@@ -36,6 +36,15 @@ data class AppSettings(
     val imageSeed: Long = -1L,
     val imageLoraPath: String = "",
     val imageLoraScale: Float = 0.8f,
+    val imageControlNetPath: String = "",
+    val imageControlImagePath: String = "",
+    val imageControlStrength: Float = 0.9f,
+    val imageControlType: String = "none",
+    val imageControlCanny: Boolean = false,
+    val musicBpm: Int = 138,
+    val musicMinutes: Float = 4.5f,
+    val musicSeed: Long = -1L,
+    val npuAutoUpscale: Boolean = false,
     val npuAssist: Boolean = false
 ) {
     val systemPrompt: String
@@ -91,6 +100,15 @@ class SettingsStore(context: Context) {
         imageSeed = prefs.getLong("imageSeed", -1L),
         imageLoraPath = prefs.getString("imageLoraPath", "") ?: "",
         imageLoraScale = prefs.getFloat("imageLoraScale", 0.8f),
+        imageControlNetPath = prefs.getString("imageControlNetPath", "") ?: "",
+        imageControlImagePath = prefs.getString("imageControlImagePath", "") ?: "",
+        imageControlStrength = prefs.getFloat("imageControlStrength", 0.9f),
+        imageControlType = prefs.getString("imageControlType", "none") ?: "none",
+        imageControlCanny = prefs.getBoolean("imageControlCanny", false),
+        musicBpm = prefs.getInt("musicBpm", 138),
+        musicMinutes = prefs.getFloat("musicMinutes", 4.5f),
+        musicSeed = prefs.getLong("musicSeed", -1L),
+        npuAutoUpscale = prefs.getBoolean("npuAutoUpscale", false),
         npuAssist = prefs.getBoolean("npuAssist", false)
     )
         android.util.Log.i(
@@ -102,7 +120,8 @@ class SettingsStore(context: Context) {
     }
 
     fun update(transform: (AppSettings) -> AppSettings) {
-        val next = transform(_state.value)
+        val previous = _state.value
+        val next = transform(previous)
         _state.value = next
         prefs.edit().apply {
             putString("backend", next.backend)
@@ -116,9 +135,6 @@ class SettingsStore(context: Context) {
             putString("customSystemPrompt", next.customSystemPrompt)
             putString("cloudModel", next.cloudModel)
             putBoolean("cloudEnabled", next.cloudEnabled)
-            remove("geminiKey")
-            remove("hfToken")
-            remove("civitaiToken")
             putBoolean("nsfwEnabled", next.nsfwEnabled)
             putBoolean("adultConfirmed", next.adultConfirmed)
             putString("selectedModelPath", next.selectedModelPath)
@@ -135,11 +151,42 @@ class SettingsStore(context: Context) {
             putLong("imageSeed", next.imageSeed)
             putString("imageLoraPath", next.imageLoraPath)
             putFloat("imageLoraScale", next.imageLoraScale)
+            putString("imageControlNetPath", next.imageControlNetPath)
+            putString("imageControlImagePath", next.imageControlImagePath)
+            putFloat("imageControlStrength", next.imageControlStrength)
+            putString("imageControlType", next.imageControlType)
+            putBoolean("imageControlCanny", next.imageControlCanny)
+            putInt("musicBpm", next.musicBpm)
+            putFloat("musicMinutes", next.musicMinutes)
+            putLong("musicSeed", next.musicSeed)
+            putBoolean("npuAutoUpscale", next.npuAutoUpscale)
             putBoolean("npuAssist", next.npuAssist)
         }.apply()
-        // Tokens never go into the plaintext preferences file.
-        secure.put("geminiKey", next.geminiKey)
-        secure.put("hfToken", next.hfToken)
-        secure.put("civitaiToken", next.civitaiToken)
+        // Tokens never go into the plaintext preferences file. A legacy
+        // plaintext value is deleted only after the encrypted copy has been
+        // read back successfully; if the Keystore fails, it stays in place.
+        val tokens = mapOf(
+            "geminiKey" to next.geminiKey,
+            "hfToken" to next.hfToken,
+            "civitaiToken" to next.civitaiToken
+        )
+        for ((name, value) in tokens) {
+            val oldValue = when (name) {
+                "geminiKey" -> previous.geminiKey
+                "hfToken" -> previous.hfToken
+                else -> previous.civitaiToken
+            }
+            // Sliders call update() dozens of times per second. Do not touch
+            // the Keystore for a token that neither changed nor has a legacy
+            // plaintext copy waiting to be migrated.
+            if (value == oldValue && prefs.getString(name, null) == null) continue
+            if (value.isBlank()) {
+                // An explicit clear is allowed to remove both copies.
+                secure.put(name, "")
+                prefs.edit().remove(name).commit()
+            } else if (secure.put(name, value) && secure.read(name) == value) {
+                prefs.edit().remove(name).commit()
+            }
+        }
     }
 }

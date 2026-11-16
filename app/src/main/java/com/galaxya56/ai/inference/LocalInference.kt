@@ -43,6 +43,9 @@ data class ImageGenerateResult(
     val backend: String = "",
     val sampler: String = "",
     val lora: String = "",
+    val controlImage: String = "",
+    val controlStrength: Float = 0f,
+    val controlType: String = "",
     val error: String = ""
 )
 
@@ -93,6 +96,8 @@ object LocalInference {
     external fun nativeEnnUpscale(inputPath: String, outputPath: String, modelPath: String): String
     external fun nativeImageLoad(path: String, threads: Int, backendMode: String): String
     external fun nativeImageUnload(): String
+    external fun nativeImageLoadControlNet(path: String): String
+    external fun nativeImageUnloadControlNet(): String
     external fun nativeImageStatus(): String
     external fun nativeImageGenerate(
         prompt: String,
@@ -106,6 +111,10 @@ object LocalInference {
         sampler: String,
         loraPath: String,
         loraScale: Float,
+        controlImage: String,
+        controlStrength: Float,
+        controlType: String,
+        controlCanny: Boolean,
         outputPath: String
     ): String
     external fun nativeImageCancel()
@@ -217,6 +226,12 @@ object LocalInference {
         runCatching { nativeImageUnload() }
     }
 
+    fun imageLoadControlNet(path: String): JSONObject =
+        JSONObject(nativeImageLoadControlNet(path))
+
+    fun imageUnloadControlNet(): JSONObject =
+        JSONObject(nativeImageUnloadControlNet())
+
     fun imageStatus(): JSONObject = JSONObject(nativeImageStatus())
 
     fun imageGenerate(
@@ -231,12 +246,17 @@ object LocalInference {
         sampler: String,
         loraPath: String,
         loraScale: Float,
+        controlImage: String = "",
+        controlStrength: Float = 0.9f,
+        controlType: String = "none",
+        controlCanny: Boolean = false,
         outputPath: String
     ): ImageGenerateResult {
         val o = JSONObject(
             nativeImageGenerate(
                 prompt, negativePrompt, width, height, steps, cfg, vaeTiling, seed,
-                sampler, loraPath, loraScale, outputPath
+                sampler, loraPath, loraScale, controlImage, controlStrength, controlType,
+                controlCanny, outputPath
             )
         )
         return ImageGenerateResult(
@@ -250,6 +270,9 @@ object LocalInference {
             backend = o.optString("backend"),
             sampler = o.optString("sampler"),
             lora = o.optString("lora"),
+            controlImage = o.optString("controlImage"),
+            controlStrength = o.optDouble("controlStrength", 0.9).toFloat(),
+            controlType = o.optString("controlType"),
             error = o.optString("error")
         )
     }

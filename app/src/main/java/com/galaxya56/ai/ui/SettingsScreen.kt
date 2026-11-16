@@ -1,5 +1,7 @@
 package com.galaxya56.ai.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,6 +40,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.galaxya56.ai.data.Catalog
+import com.galaxya56.ai.data.StorageAdvisor
 import com.galaxya56.ai.inference.LocalInference
 import com.galaxya56.ai.ui.theme.Accent
 import com.galaxya56.ai.ui.theme.Surface2
@@ -62,6 +65,13 @@ fun SettingsScreen(viewModel: AppViewModel) {
     var hfToken by rememberSaveable(settings.hfToken) { mutableStateOf(settings.hfToken) }
     var civitaiToken by rememberSaveable(settings.civitaiToken) { mutableStateOf(settings.civitaiToken) }
     var geminiKey by rememberSaveable(settings.geminiKey) { mutableStateOf(settings.geminiKey) }
+    var storage by remember { mutableStateOf(StorageAdvisor.inspect(context)) }
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            viewModel.importFolderFromTree(uri)
+            storage = StorageAdvisor.inspect(context)
+        }
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -84,6 +94,35 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 hardware.thermalWarning
             )
             LabelledValue("Runtime", LocalInference.backendName())
+        }
+
+        SettingsCard("Speicher, ZRAM & USB-C") {
+            Text(
+                "Android verwaltet ZRAM/SWAP selbst. Eine normale App kann beides ohne Root nicht " +
+                    "einschalten; sie kann aber den Ist-Zustand zeigen und Modelle per mmap nur " +
+                    "seitenweise in den RAM holen.",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted
+            )
+            LabelledValue("RAM", "${storage.ramAvailMb} / ${storage.ramTotalMb} MB frei")
+            LabelledValue("App-Speicher", "${storage.appFreeMb} MB frei")
+            LabelledValue("ZRAM", if (storage.zramMb > 0) "${storage.zramMb} MB" else "nicht sichtbar")
+            LabelledValue("Swap", storage.swapSummary)
+            storage.removableVolumes.forEach { volume ->
+                LabelledValue("USB-C", volume)
+            }
+            Text(
+                "Modelle auf USB-C: Ordner auswählen, die App kopiert GGUF/Safetensors/NNC in " +
+                    "den App-Speicher. Danach sind sie offline und ohne Stick nutzbar.",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                Button(onClick = { folderPicker.launch(null) }) { Text("Aus USB-C/Ordner importieren") }
+                OutlinedButton(onClick = { storage = StorageAdvisor.inspect(context) }) { Text("Aktualisieren") }
+            }
+            LabelledValue("Modellordner", storage.modelDir)
         }
 
         SettingsCard("Backend-Reihenfolge") {

@@ -16,6 +16,8 @@
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stable-diffusion.cpp/thirdparty/stb_image_write.h"
+// stb_image has its implementation in enn_engine.cpp; only declarations here.
+#include "third_party/stable-diffusion.cpp/thirdparty/stb_image.h"
 
 #define LOG_TAG "A56AI-IMAGE"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -100,6 +102,8 @@ struct State {
     int threads = 4;
     std::string version = "unbekannt";
     std::string backend = "unbekannt";
+    bool controlNetLoaded = false;
+    std::string controlNetPath;
     std::atomic<bool> cancelRequested{false};
     std::atomic<int> progressStep{0};
     std::atomic<int> progressSteps{0};
@@ -223,6 +227,8 @@ std::string ImageEngine::loadModel(const std::string& path, int threads, const s
     s.path = path;
     s.threads = threads;
     s.backend = backendLabel;
+    s.controlNetLoaded = false;
+    s.controlNetPath.clear();
     const char* version = sd_get_model_version_name(ctx);
     s.version = version ? version : "unbekannt";
     sd_set_progress_callback(progressCallback, nullptr);
@@ -240,6 +246,7 @@ std::string ImageEngine::loadModel(const std::string& path, int threads, const s
          << "\",\"requestedBackend\":\"" << jsonEscape(backendMode)
          << "\",\"fallback\":" << (fallback ? "true" : "false")
          << ",\"npuDirect\":false"
+         << ",\"controlNet\":false"
          << ",\"imageSupport\":" << (sd_ctx_supports_image_generation(ctx) ? "true" : "false")
          << ",\"videoSupport\":" << (sd_ctx_supports_video_generation(ctx) ? "true" : "false")
          << "}";
@@ -256,6 +263,8 @@ std::string ImageEngine::unload() {
     s.path.clear();
     s.version = "unbekannt";
     s.backend = "unbekannt";
+    s.controlNetLoaded = false;
+    s.controlNetPath.clear();
     return R"json({"ok":true})json";
 }
 
@@ -268,6 +277,8 @@ std::string ImageEngine::statusJson() {
          << "\",\"model\":\"" << jsonEscape(s.version)
          << "\",\"backend\":\"" << jsonEscape(s.backend)
          << "\",\"threads\":" << s.threads
+         << ",\"controlNet\":" << (s.controlNetLoaded ? "true" : "false")
+         << ",\"controlNetPath\":\"" << jsonEscape(s.controlNetPath) << "\""
          << ",\"progressStep\":" << s.progressStep.load()
          << ",\"progressSteps\":" << s.progressSteps.load() << "}";
     return json.str();
@@ -311,6 +322,61 @@ std::string ImageEngine::generate(const ImageGenParams& params) {
         rc = sd_opt_set_loras(opt, "loras", &lora, 1);
         LOGI("SD image LoRA %s scale=%.2f rc=%d", params.loraPath.c_str(), params.loraScale, (int)rc);
     }
+    sd_tensor_t* controlTensor = nullptr;
+    sd_tensor_t* processedControl = nullptr;
+    std::string setupError;
+    if (rc == SD_STATUS_OK && !params.controlImagePath.empty()) {
+        if (!s.controlNetLoaded) {
+            setupError = "ControlNet ist nicht geladen";
+            rc = SD_STATUS_INVALID_ARGUMENT;
+        } else {
+            int cw = 0, ch = 0, cn = 0;
+            unsigned char* rgb = stbi_load(params.controlImagePath.c_str(), &cw, &ch, &cn, 3);
+            if (!rgb || cw <= 0 || ch <= 0) {
+                setupError = "Control-Bild konnte nicht gelesen werden: " + params.controlImagePath;
+                rc = SD_STATUS_INVALID_ARGUMENT;
+                if (rgb) stbi_image_free(rgb);
+            } else {
+                const size_t pixels = static_cast<size_t>(cw) * ch;
+                std::vector<unsigned char> planar(pixels * 3);
+                for (int y = 0; y < ch; ++y) {
+                    for (int x = 0; x < cw; ++x) {
+                        const size_t src = (static_cast<size_t>(y) * cw + x) * 3;
+                        const size_t dst = static_cast<size_t>(y) * cw + x;
+                        planar[dst] = rgb[src];
+                        planar[pixels + dst] = rgb[src + 1];
+                        planar[pixels * 2 + dst] = rgb[src + 2];
+                    }
+                }
+                stbi_image_free(rgb);
+                const int64_t shape[3] = {3, cw, ch};
+                controlTensor = sd_tensor_create(SD_TENSOR_U8, 3, shape, planar.data(), planar.size());
+                if (!controlTensor) {
+                    setupError = "Control-Tensor konnte nicht erzeugt werden";
+                    rc = SD_STATUS_OUT_OF_MEMORY;
+                } else if (params.controlCanny || params.controlType == "canny") {
+                    const sd_status_t cannyRc = sd_preprocess_canny(
+                        controlTensor, 0.08f, 0.08f, 0.8f, 1.0f, false, &processedControl);
+                    if (cannyRc != SD_STATUS_OK || !processedControl) {
+                        setupError = "Canny-Vorverarbeitung fehlgeschlagen: " + lastError();
+                        rc = cannyRc == SD_STATUS_OK ? SD_STATUS_GENERATION_FAILED : cannyRc;
+                    } else {
+                        LOGI("SD control Canny: %dx%d", cw, ch);
+                    }
+                }
+                if (rc == SD_STATUS_OK) {
+                    rc = sd_opt_set_tensor(opt, "control_image", processedControl ? processedControl : controlTensor);
+                    if (rc == SD_STATUS_OK) rc = sd_opt_set_float(opt, "control_strength", params.controlStrength);
+                    if (rc == SD_STATUS_OK && params.controlType != "none") {
+                        rc = sd_opt_set_string(opt, "control_type", params.controlType.c_str());
+                    }
+                    LOGI("SD control image=%s strength=%.2f type=%s canny=%d rc=%d",
+                         params.controlImagePath.c_str(), params.controlStrength,
+                         params.controlType.c_str(), params.controlCanny ? 1 : 0, (int)rc);
+                }
+            }
+        }
+    }
     LOGI("SD generate backend=%s sampler=%s steps=%d cfg=%.2f seed=%lld", s.backend.c_str(), params.sampler.c_str(), params.steps, params.cfg, params.seed);
 
     sd_result_t* result = nullptr;
@@ -318,7 +384,9 @@ std::string ImageEngine::generate(const ImageGenParams& params) {
     if (rc == SD_STATUS_OK) rc = sd_generate_image(s.ctx, opt, &result);
     const auto end = std::chrono::steady_clock::now();
     const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    const std::string error = rc == SD_STATUS_OK ? "" : lastError();
+    const std::string error = rc == SD_STATUS_OK ? "" : (setupError.empty() ? lastError() : setupError);
+    if (processedControl) sd_tensor_free(processedControl);
+    if (controlTensor) sd_tensor_free(controlTensor);
     sd_opt_free(opt);
 
     if (rc != SD_STATUS_OK || !result) {
@@ -377,6 +445,9 @@ std::string ImageEngine::generate(const ImageGenParams& params) {
          << ",\"backend\":\"" << jsonEscape(s.backend)
          << "\",\"sampler\":\"" << jsonEscape(params.sampler)
          << "\",\"lora\":\"" << jsonEscape(params.loraPath)
+         << "\",\"controlImage\":\"" << jsonEscape(params.controlImagePath)
+         << "\",\"controlStrength\":" << params.controlStrength
+         << ",\"controlType\":\"" << jsonEscape(params.controlType)
          << "\",\"path\":\"" << jsonEscape(params.outputPath)
          << "\"}";
     LOGI("SD result JSON (%zu chars): %s", json.str().size(), json.str().c_str());
@@ -387,6 +458,37 @@ void ImageEngine::cancel() {
     State& s = state();
     s.cancelRequested.store(true);
     if (s.ctx) sd_cancel_generation(s.ctx, SD_CANCEL_ALL);
+}
+
+
+std::string ImageEngine::loadControlNet(const std::string& path) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (!s.ctx) return R"json({"ok":false,"error":"Kein Diffusionsmodell geladen"})json";
+    if (path.empty()) {
+        if (s.ctx) sd_ctx_unload_control_net(s.ctx);
+        s.controlNetLoaded = false;
+        s.controlNetPath.clear();
+        return R"json({"ok":true})json";
+    }
+    if (!sd_ctx_load_control_net(s.ctx, path.c_str())) {
+        const std::string error = lastError();
+        LOGE("ControlNet load failed: %s", error.c_str());
+        return "{\"ok\":false,\"error\":\"" + jsonEscape(error) + "\"}";
+    }
+    s.controlNetLoaded = true;
+    s.controlNetPath = path;
+    LOGI("ControlNet loaded: %s", path.c_str());
+    return "{\"ok\":true,\"path\":\"" + jsonEscape(path) + "\"}";
+}
+
+std::string ImageEngine::unloadControlNet() {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (s.ctx) sd_ctx_unload_control_net(s.ctx);
+    s.controlNetLoaded = false;
+    s.controlNetPath.clear();
+    return R"json({"ok":true})json";
 }
 
 } // namespace galaxya56

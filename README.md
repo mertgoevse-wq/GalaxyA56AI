@@ -28,7 +28,12 @@ einer Oberfläche im Stil von ChatGPT/Claude.
 | GPU-Erkennung | ✅ implementiert | Vulkan-Instanz, „Samsung Xclipse 540“, API 1.3, RT-/IntDot, 4 Compute-CUs |
 | GPU-Inferenz (Vulkan) | ✅ auf Gerät verifiziert | llama.cpp `GGML_VULKAN=ON`, GPU-Layer-Offload, 10,3 tok/s (Qwen2.5-0.5B Q4_K_M) |
 | Lokale Bildgenerierung (SD 1.5 / SD-Turbo) | ✅ SD1.5, ⚠️ SD-Turbo | `stable-diffusion.cpp` als separate `libstable-diffusion.so`; SD1.5 läuft, SD-Turbo lädt und rechnet, liefert mit diesem GGUF-Export aber nur Rauschen (Zero-Terminal-SNR-Metadaten fehlen). Modellauswahl, CFG, Steps, **VAE-Tiling** (512×512 getestet). |
-| Lokale Video-/Musikgenerierung | ❌ offen | Katalog + Download vorhanden, Runtime fehlt |
+| ControlNet (SD1.5) | ✅ auf A56 verifiziert | Canny-ControlNet (`control_v11p_sd15_canny.pth`, 1,4 GB) geladen, 256×256/4 Steps/LCM/CFG 1,5 in **25,1 s** auf Vulkan; Control-Bild, Stärke 0,9 und Typ `canny` landen in JSON/PNG. |
+| Lokale Musik (Progressive Psytrance) | ✅ auf A56 verifiziert | Lokaler DSP-Renderer `PsytranceEngine`: 44,1 kHz Stereo-WAV, 138 BPM, **4:30** (270 s), 46 MB, Mean −14,3 dB / Peak −3,3 dB, ohne Cloud. Kein neuronales Musikmodell. |
+| Lokale Videogenerierung | ⚠️ Katalog/experimentell | AnimateDiff-/Wan-Kandidaten und Downloads vorhanden; in diesem Build keine Video-Runtime und keine MP4-Ausgabe. |
+| Bild-Extensions / Tutorials | ✅ implementiert | ControlNet-Karte, Modell-/Bildauswahl, Stärke, Typ-Chips, Canny; 6-seitiges Handbuch mit Checklisten und Werkstatt-Notizen. |
+| Speicher, ZRAM & USB-C | ✅ Diagnose/Import | Liest RAM, freien App-Speicher, `/proc/swaps`, ZRAM und Wechselmedien; USB-C/SD-Import per SAF (`OpenDocumentTree`). ZRAM/Swap kann ohne Root nicht aktiviert werden. |
+| Sichere Tokens | ✅ gehärtet | AES/GCM im Android Keystore; Klartext-Migration löscht nur nach verifiziertem Rücklesen, bei Keystore-Fehler bleiben alte Werte erhalten. |
 | Cloud-Chat + Cloud-Bild | ✅ implementiert | Gemini API-Key (`gemini-2.5-flash`, `-pro`, `gemini-2.5-flash-image`) |
 
 Auf dem **Galaxy A56 (SM-A566B, Android 17)** installiert und getestet:
@@ -59,8 +64,15 @@ Auf dem **Galaxy A56 (SM-A566B, Android 17)** installiert und getestet:
 - **Coding-Modus** über Qwen2.5-Coder (1.5B/3B) mit passendem System-Prompt.
 - **Studio**: Bild-, Video- und Musik-Tab mit Prompt-Feldern, Modellkatalog,
   lokaler SD1.5-Generierung (SD-Turbo lädt, Qualität ist mit dem getesteten Export noch unbrauchbar),
-  auswählbarem Checkpoint, CFG/Steps/VAE-Tiling,
-  Cloud-Bildgenerierung und **NPU-4×-Upscale** des aktuellen Bildes.
+  auswählbarem Checkpoint, CFG/Steps/VAE-Tiling, **ControlNet**, **NPU-4×-Upscale**,
+  **Progressive-Psytrance-Renderer** (4:30, 44,1 kHz, Wiedergabe) und Cloud-Bildgenerierung.
+- **Extensions-Tab**: ControlNet, LCM-LoRA, IP-Adapter, ADetailer, AnimateDiff, Wan,
+  MusicGen/ACE-Step, Whisper und LLM-LoRAs mit ehrlichem Status (integriert / kompatibel /
+  experimentell / geplant) und Quellenlinks.
+- **Handbuch**: sechs interaktive Seiten zu Steps, CFG, Sampler, ControlNet, NPU und
+  Speicher; Checklisten, Fortschritt und Werkstatt-Notizen.
+- **Civitai-Vorschauen**: Beispielbilder direkt in Treffer-Karten und Detail-Sheets,
+  mit speicherschonendem Downsampling; 18+-Inhalte bleiben hinter dem Gate.
 - **Modelle → Entdecken**: automatische, gemeinsame Suche auf Hugging Face und Civitai;
   Filter für LLM, Bildmodelle und LoRAs; Quantisierungen (Q2–Q8, FP16 …) direkt an der
   Karte; alle Dateien inklusive LoRA; `abliterated`, `uncensored`, `unliberated` und NSFW
@@ -68,7 +80,9 @@ Auf dem **Galaxy A56 (SM-A566B, Android 17)** installiert und getestet:
 - **Modelle → LoRA**: Bild- und Sprach-LoRAs, Download nach `loras/`, Anwenden auf GGUF.
 - **Optionen**: Hardware-Karte, Backend-Reihenfolge (NPU → GPU → CPU), ENN-/NPU-Test,
   Kontext, Threads, Temperatur, Top-P, max. Tokens, System-Prompt-Bibliothek, Cloud-Key,
-  HF-/Civitai-Token, NSFW-Freigabe, LoRA-Stärke.
+  HF-/Civitai-Token, NSFW-Freigabe, LoRA-Stärke, **Speicher-/ZRAM-Diagnose und USB-C-Import**.
+- **Design**: eigenes „Field Lab“-Theme (Graphitgrün, Signal-Chartreuse, Serif-Hero,
+  Monospace-Metadaten); Designsystem in [`DESIGN.md`](DESIGN.md).
 - **Hardware-Probe** (nativ): CPU-Kerne (Performance/Efficiency über MIDR), Max-Takt,
   RAM, Thermalzonen, Vulkan-GPU, NNAPI-NPU, SoC-TOPS.
 
@@ -158,6 +172,9 @@ zusätzlich beliebige GGUF- und LoRA-Dateien über die Suche laden.
 - **Civitai**: Checkpoints/LoRAs, Download-Token nötig; NSFW nur nach 18+-Bestätigung.
 - **Abliterated/Uncensored**: über Suchbegriffe auffindbar, keine Cloud-Umgehung.
 
+> Design und NPU-Recherche: [`DESIGN.md`](DESIGN.md) und
+> [`docs/NPU_EXYNOS_1580.md`](docs/NPU_EXYNOS_1580.md).
+
 > Für den lokalen Betrieb auf 8 GB RAM: 1B–3B-Modelle in Q4_K_M. 3B belegt ~2 GB Datei
 > plus ~1–2 GB Kontext/KV-Cache. 7B/8B sind auf dem A56 technisch möglich, aber langsam
 > und RAM-kritisch.
@@ -170,8 +187,11 @@ zusätzlich beliebige GGUF- und LoRA-Dateien über die Suche laden.
   ausschließlich über einen **Google-AI-Studio-API-Key**.
 - Ein Google-AI-Pro-Abo lässt sich nicht per E-Mail/Passwort in Dritt-Apps nutzen.
   Key erstellen: <https://aistudio.google.com/apikey>.
-- API-Keys und HF-/Civitai-Tokens liegen in `SharedPreferences` (nicht verschlüsselt).
-  Für maximale Sicherheit nur eigene Geräte nutzen und Tokens widerrufen, wenn nötig.
+- API-Keys und HF-/Civitai-Tokens liegen **AES/GCM-verschlüsselt** im Android Keystore
+  (`SecureTokenStore`). Die Alt-Migration löscht Klartext nur, wenn der verschlüsselte
+  Wert nach dem Schreiben nachweislich lesbar ist; bei einem Keystore-Fehler bleiben
+  die alten Werte erhalten. Für maximale Sicherheit nur eigene Geräte nutzen und
+  Tokens widerrufen, wenn nötig.
 - Modell-Downloads laufen über HTTPS; die App hat keine Telemetrie.
 - ENN: Es werden **keine Samsung-Binaries** mitgeliefert. Die App lädt die öffentliche
   Vendor-Lib (`libenn_public_api_cpp.so`) zur Laufzeit und nutzt die bereits auf dem Gerät
@@ -181,16 +201,19 @@ zusätzlich beliebige GGUF- und LoRA-Dateien über die Suche laden.
 
 ## Offene Arbeiten
 
-1. ENN-Modellcompiler: Öffentlich verfügbare `.nnc`-Modelle sind meist für Exynos 2500
-   (Solomon, NCP 28) kompiliert; der A56 nutzt NCP 26. LLM-/Diffusions-NNC bräuchten den
-   nicht öffentlichen ENN-Compiler. Die vorhandene ENN-Runtime ist auf CNN-Modelle
-   (MIDAS, HumanSeg) beschränkt.
-2. Bild-Runtime: SD1.5/SD-Turbo sind vermessen. Offen: SDXL/Flux auf 8 GB RAM,
-   automatische Modell-Empfehlung nach freiem RAM und Bild-LoRA-Anwendung im SD-Graph.
-3. Audio-/Video-Runtime: MusicGen / ACE-Step, Wan2.1; `.nnc`-Modelle für die NPU fehlen.
-4. Benchmark-Suite: Prompt-Länge, Threads, GPU-Layer, Steps/CFG, VAE-Tiling und Thermik
-   systematisch und mit Kühlpausen messen; die ersten 512er-Werte stehen oben.
-5. Vulkan auf weiteren Geräten testen (Xclipse 540 ist verifiziert, Adreno/Mali offen).
+1. **Video-Runtime**: AnimateDiff/Wan sind im Katalog, aber es gibt noch keine lokale
+   Frame-/MP4-Pipeline. Nächster sinnvoller Schritt: 8–16 Frames bei 256², danach
+   MediaCodec-Encode und Thermikmessung.
+2. **Neuronale Musik**: MusicGen Small / ACE-Step brauchen eine eigene Runtime; der
+   Psytrance-Renderer ist bewusst DSP und kein neuronaler Ersatz.
+3. **NPU-Diffusion**: Der öffentliche ENN-Compiler und LiteRT/ExecuTorch unterstützen
+   den Exynos 1580 (Stand November 2026) nicht. Details, Quellen und Messwerte in
+   [`docs/NPU_EXYNOS_1580.md`](docs/NPU_EXYNOS_1580.md).
+4. **Bild-Runtime**: SDXL/Flux auf 8 GB RAM, automatische Modell-Empfehlung nach freiem
+   RAM und eine echte layerweise CPU/GPU-Aufteilung für SD.
+5. **Benchmark-Suite**: Prompt-Länge, Threads, GPU-Layer, Steps/CFG, VAE-Tiling und Thermik
+   systematisch und mit Kühlpausen messen; die bisherigen Werte stehen oben.
+6. **Vulkan** auf weiteren Geräten testen (Xclipse 540 ist verifiziert, Adreno/Mali offen).
 
 ---
 

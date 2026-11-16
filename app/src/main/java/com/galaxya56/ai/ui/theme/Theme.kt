@@ -10,28 +10,38 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-val Ink = Color(0xFF0B0B0C)
-val Surface1 = Color(0xFF131315)
-val Surface2 = Color(0xFF1A1A1E)
-val Surface3 = Color(0xFF232329)
-val Line = Color(0xFF2C2C33)
-val TextMain = Color(0xFFECECEF)
-val TextMuted = Color(0xFF9C9CA6)
-val Accent = Color(0xFFE08A5B)
-val AccentSoft = Color(0xFF3B241A)
-val AccentText = Color(0xFFFFDCC8)
-val Danger = Color(0xFFE57373)
+/*
+ * "Field Lab" identity.
+ *
+ * The A56 is a measurement instrument as much as a creative toy: its real
+ * limits (RAM, thermals, NPU reach) are part of the interface. The palette is
+ * therefore a darkroom green-graphite with one signal-colour accent, not a
+ * generic purple AI gradient. Serif headlines carry the editorial/print side;
+ * monospace metadata carries the instrument side.
+ */
+val Ink = Color(0xFF0D100E)
+val Surface1 = Color(0xFF151916)
+val Surface2 = Color(0xFF1C211D)
+val Surface3 = Color(0xFF262D27)
+val Line = Color(0xFF354038)
+val TextMain = Color(0xFFF0EEE4)
+val TextMuted = Color(0xFFA2ADA4)
+val Accent = Color(0xFFD8F26B)
+val AccentSoft = Color(0xFF2E3A1D)
+val AccentText = Color(0xFFF2FFC4)
+val Danger = Color(0xFFFF8A7A)
+val Signal = Color(0xFFE6A56F)
 
 private val Scheme = darkColorScheme(
     primary = Accent,
-    onPrimary = Color(0xFF1B0F08),
+    onPrimary = Color(0xFF1A2108),
     primaryContainer = AccentSoft,
     onPrimaryContainer = AccentText,
-    secondary = Color(0xFF8FB8A8),
-    onSecondary = Color(0xFF0B1512),
-    secondaryContainer = Color(0xFF1D2B26),
-    onSecondaryContainer = Color(0xFFCFE9DE),
-    tertiary = Color(0xFF9E9AD6),
+    secondary = Color(0xFFA9C7B8),
+    onSecondary = Color(0xFF0C1712),
+    secondaryContainer = Color(0xFF20312A),
+    onSecondaryContainer = Color(0xFFD3EADF),
+    tertiary = Signal,
     background = Ink,
     onBackground = TextMain,
     surface = Surface1,
@@ -44,23 +54,43 @@ private val Scheme = darkColorScheme(
     outline = Line,
     outlineVariant = Line,
     error = Danger,
-    onError = Color(0xFF2A0A0A),
+    onError = Color(0xFF2B0A06),
     inverseSurface = TextMain,
     inverseOnSurface = Ink
 )
 
 private val AppTypography = Typography(
+    headlineLarge = TextStyle(
+        fontFamily = FontFamily.Serif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 32.sp,
+        lineHeight = 36.sp,
+        letterSpacing = (-0.4).sp
+    ),
     headlineSmall = TextStyle(
+        fontFamily = FontFamily.Serif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 24.sp,
+        lineHeight = 29.sp,
+        letterSpacing = (-0.2).sp
+    ),
+    titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp
+        fontSize = 19.sp,
+        lineHeight = 24.sp
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 16.sp,
         lineHeight = 22.sp
+    ),
+    titleSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp,
+        lineHeight = 20.sp
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -74,14 +104,14 @@ private val AppTypography = Typography(
     ),
     bodySmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 12.sp,
-        lineHeight = 17.sp
+        fontSize = 12.5.sp,
+        lineHeight = 18.sp
     ),
     labelSmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontSize = 11.sp,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 10.5.sp,
         lineHeight = 14.sp,
-        letterSpacing = 0.3.sp
+        letterSpacing = 0.2.sp
     )
 )
 

@@ -4,7 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -29,15 +32,23 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.galaxya56.ai.ui.theme.Line
 import com.galaxya56.ai.ui.theme.Surface2
 import com.galaxya56.ai.ui.theme.Surface3
@@ -197,6 +208,68 @@ fun LabelledValue(label: String, value: String, warn: Boolean = false) {
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium
         )
+    }
+}
+
+/**
+ * Small, dependency-free preview loader. Civitai supplies one image per
+ * version; downloading it lazily keeps the list fast and avoids a new library.
+ */
+@Composable
+fun RemoteImage(url: String, contentDescription: String, modifier: Modifier = Modifier, contentScale: ContentScale = ContentScale.Crop) {
+    var bitmap by remember(url) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var failed by remember(url) { mutableStateOf(false) }
+    LaunchedEffect(url) {
+        if (url.isBlank()) return@LaunchedEffect
+        val loaded = withContext(Dispatchers.IO) {
+            runCatching {
+                val connection = java.net.URL(url).openConnection()
+                connection.connectTimeout = 12_000
+                connection.readTimeout = 20_000
+                connection.setRequestProperty("User-Agent", "GalaxyA56AI/2.0")
+                // Civitai previews can be several megabytes. Read a bounded
+                // buffer, then decode with inSampleSize so a scrolling list of
+                // cards never holds full-resolution bitmaps in memory.
+                val bytes = connection.getInputStream().use { input ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(16 * 1024)
+                    var total = 0
+                    while (total < 8 * 1024 * 1024) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        out.write(buffer, 0, n)
+                        total += n
+                    }
+                    out.toByteArray()
+                }
+                if (bytes.isEmpty()) return@runCatching null
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= 640 && bounds.outHeight / (sample * 2) >= 480) {
+                    sample *= 2
+                }
+                BitmapFactory.decodeByteArray(
+                    bytes, 0, bytes.size,
+                    BitmapFactory.Options().apply { inSampleSize = sample }
+                )?.asImageBitmap()
+            }.getOrNull()
+        }
+        bitmap = loaded
+        failed = loaded == null
+    }
+    Box(modifier.background(Surface2), contentAlignment = Alignment.Center) {
+        val image = bitmap
+        if (image != null) {
+            Image(image, contentDescription = contentDescription, contentScale = contentScale, modifier = Modifier.fillMaxSize())
+        } else {
+            Text(
+                if (failed) "Vorschau nicht verfügbar" else "Vorschau lädt …",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted,
+                modifier = Modifier.padding(12.dp)
+            )
+        }
     }
 }
 

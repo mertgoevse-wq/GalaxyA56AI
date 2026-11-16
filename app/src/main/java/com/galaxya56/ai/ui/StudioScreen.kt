@@ -1,6 +1,9 @@
 package com.galaxya56.ai.ui
 
 import android.graphics.BitmapFactory
+import android.media.MediaPlayer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -25,15 +28,19 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,11 +73,14 @@ fun StudioScreen(viewModel: AppViewModel) {
     var prompt by rememberSaveable { mutableStateOf("") }
     var negative by rememberSaveable { mutableStateOf("") }
     var showImageModels by remember { mutableStateOf(false) }
+    var showControlModels by remember { mutableStateOf(false) }
     var showGallery by remember { mutableStateOf(false) }
+    var showTutorial by remember { mutableStateOf(false) }
 
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val installed by viewModel.installed.collectAsStateWithLifecycle()
     val busy by viewModel.studioBusy.collectAsStateWithLifecycle()
+    val upscaleBusy by viewModel.upscaleBusy.collectAsStateWithLifecycle()
     val error by viewModel.studioError.collectAsStateWithLifecycle()
     val image by viewModel.studioImage.collectAsStateWithLifecycle()
     val localImageModel by viewModel.localImageModel.collectAsStateWithLifecycle()
@@ -78,10 +88,24 @@ fun StudioScreen(viewModel: AppViewModel) {
     val doctorBusy by viewModel.doctorBusy.collectAsStateWithLifecycle()
     val lastRecipe by viewModel.lastRecipe.collectAsStateWithLifecycle()
     val gallery by viewModel.gallery.collectAsStateWithLifecycle()
+    val musicResult by viewModel.musicResult.collectAsStateWithLifecycle()
+    val musicBusy by viewModel.musicBusy.collectAsStateWithLifecycle()
+    val musicProgress by viewModel.musicProgress.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    var playing by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { player?.release() }
+            player = null
+        }
+    }
+    val controlImagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let(viewModel::setControlImageFromUri) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(ModelType.IMAGE to "Bild", ModelType.VIDEO to "Video", ModelType.MUSIC to "Musik").forEach { (type, label) ->
                 val selected = mode == type
                 Surface(
@@ -97,27 +121,103 @@ fun StudioScreen(viewModel: AppViewModel) {
                     )
                 }
             }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = { showTutorial = true }) { Text("Handbuch") }
         }
 
         Spacer(Modifier.height(14.dp))
         Text(
             when (mode) {
-                ModelType.IMAGE -> "Bilder erzeugen"
-                ModelType.VIDEO -> "Videos erzeugen"
-                else -> "Musik & Audio"
+                ModelType.IMAGE -> "Bilder aus Gedanken."
+                ModelType.VIDEO -> "Bewegung, Frame für Frame."
+                else -> "Ein Track, der hier entsteht."
             },
-            style = MaterialTheme.typography.headlineSmall
+            style = MaterialTheme.typography.headlineLarge
         )
         Text(
             when (mode) {
-                ModelType.IMAGE -> "Text → Bild. Lokal über stable-diffusion.cpp (SD1.5, Vulkan/CPU) oder optional Cloud mit Gemini-Key."
-                ModelType.VIDEO -> "Text/Bild → Clip. Auf dem A56 sinnvoll: AnimateDiff (SD1.5, 16 Frames). Runtime folgt."
-                else -> "Text → Musik, TTS und ASR. Kleinste Kandidaten: MusicGen Small, Stable Audio Open Small, Whisper."
+                ModelType.IMAGE -> "Lokal über stable-diffusion.cpp. Vulkan zuerst, CPU als echter Fallback – mit Doctor, Seed und Metadaten."
+                ModelType.VIDEO -> "Kurze Clips auf dem A56: klein anfangen, Thermik beobachten. Die Video-Runtime ist experimentell."
+                else -> "Progressive Psytrance als lokaler DSP-Renderer: 4+ Minuten, 44,1 kHz, ohne Cloud. Neuronale Musikmodelle bleiben Katalog."
             },
             style = MaterialTheme.typography.bodySmall,
             color = TextMuted,
             modifier = Modifier.padding(top = 4.dp)
         )
+
+        if (mode == ModelType.MUSIC) {
+            Spacer(Modifier.height(12.dp))
+            Surface(color = Surface2, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Progressive Psytrance · lokale Engine", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Deterministischer DSP-Renderer: rolling 16th bass, offbeat kick, Phrygian lead, " +
+                            "Breakdown und zweiter Drop. 44,1 kHz Stereo-WAV, standardmäßig 4:30 lang.",
+                        style = MaterialTheme.typography.labelSmall, color = TextMuted
+                    )
+                    Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("${settings.musicBpm} BPM", style = MaterialTheme.typography.labelSmall, color = Accent)
+                        Slider(
+                            value = settings.musicBpm.toFloat(),
+                            onValueChange = { value -> viewModel.updateSettings { it.copy(musicBpm = value.toInt()) } },
+                            valueRange = 120f..150f,
+                            steps = 29,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("${"%.1f".format(settings.musicMinutes)} min", style = MaterialTheme.typography.labelSmall, color = Accent)
+                        Slider(
+                            value = settings.musicMinutes,
+                            onValueChange = { value -> viewModel.updateSettings { it.copy(musicMinutes = value) } },
+                            valueRange = 1f..8f,
+                            steps = 13,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Button(
+                        onClick = { viewModel.generateMusic(prompt) },
+                        enabled = !musicBusy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (musicBusy) "Render … ${musicProgress}%" else "Psytrance erzeugen")
+                    }
+                    if (musicBusy) {
+                        LinearProgressIndicator(
+                            progress = { musicProgress / 100f },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            color = Accent
+                        )
+                    }
+                    musicResult?.let { result ->
+                        Text(
+                            "${result.file.name} · ${result.seconds / 60}:${"%02d".format(result.seconds % 60)} · ${result.bpm} BPM · Seed ${result.seed}",
+                            style = MaterialTheme.typography.labelSmall, color = TextMuted,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                if (playing) {
+                                    runCatching { player?.stop() }
+                                    runCatching { player?.release() }
+                                    player = null
+                                    playing = false
+                                } else {
+                                    player = MediaPlayer().apply {
+                                        setDataSource(result.file.absolutePath)
+                                        prepare()
+                                        start()
+                                        setOnCompletionListener { playing = false }
+                                    }
+                                    playing = true
+                                }
+                            }) { Text(if (playing) "Stop" else "Anhören") }
+                            TextButton(onClick = { viewModel.clearMusic() }) { Text("Entfernen") }
+                        }
+                    }
+                }
+            }
+        }
 
         if (mode == ModelType.IMAGE) {
             Spacer(Modifier.height(10.dp))
@@ -179,6 +279,65 @@ fun StudioScreen(viewModel: AppViewModel) {
                     }
                 }
             }
+        }
+
+        if (mode == ModelType.IMAGE) {
+        Spacer(Modifier.height(12.dp))
+        Surface(color = Surface2, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("ControlNet", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (settings.imageControlNetPath.isBlank()) "Kein ControlNet aktiv"
+                            else File(settings.imageControlNetPath).name,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextMuted,
+                            maxLines = 1
+                        )
+                    }
+                    TextButton(onClick = { showControlModels = true }) { Text("Modell") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { controlImagePicker.launch("image/*") }) {
+                        Text(if (settings.imageControlImagePath.isBlank()) "Control-Bild" else "Bild wechseln")
+                    }
+                    if (settings.imageControlImagePath.isNotBlank()) {
+                        Text(File(settings.imageControlImagePath).name, style = MaterialTheme.typography.labelSmall, color = TextMuted, maxLines = 1, modifier = Modifier.weight(1f))
+                    }
+                }
+                Text("Stärke ${"%.2f".format(settings.imageControlStrength)}", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                Slider(
+                    value = settings.imageControlStrength,
+                    onValueChange = { value -> viewModel.updateSettings { it.copy(imageControlStrength = value) } },
+                    valueRange = 0f..2f,
+                    steps = 19
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("none", "canny", "depth", "openpose", "scribble").forEach { type ->
+                        val selected = settings.imageControlType == type
+                        Pill(
+                            type,
+                            if (selected) AccentSoft else Surface1,
+                            if (selected) Accent else TextMuted
+                        ) { viewModel.updateSettings { it.copy(imageControlType = type) } }
+                    }
+                }
+                Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Canny-Kanten", style = MaterialTheme.typography.bodySmall)
+                        Text("Für Lineart/Union-Modelle; sonst das Control-Bild direkt verwenden.", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                    }
+                    Switch(
+                        checked = settings.imageControlCanny,
+                        onCheckedChange = { value -> viewModel.updateSettings { it.copy(imageControlCanny = value) } }
+                    )
+                    if (settings.imageControlNetPath.isNotBlank()) {
+                        TextButton(onClick = { viewModel.clearControlNet() }) { Text("Aus") }
+                    }
+                }
+            }
+        }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -314,7 +473,7 @@ fun StudioScreen(viewModel: AppViewModel) {
                     },
                     enabled = !busy
                 ) {
-                    Text(if (busy) "NPU läuft …" else "NPU 4× Upscale")
+                    Text(if (upscaleBusy) "NPU läuft …" else "NPU 4× Upscale")
                 }
                 OutlinedButton(onClick = { showGallery = true }) { Text("Galerie") }
                 if (lastRecipe != null) {
@@ -420,6 +579,61 @@ fun StudioScreen(viewModel: AppViewModel) {
         }
     }
 
+    if (showControlModels) {
+        ModalBottomSheet(onDismissRequest = { showControlModels = false }, containerColor = Surface1) {
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                Text("ControlNet-Modell", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "SD1.5-ControlNet als Safetensors/GGUF (z. B. control_v11p_sd15_canny). " +
+                        "Das Modell wird beim nächsten Bild in den Diffusions-Kontext geladen.",
+                    style = MaterialTheme.typography.labelSmall, color = TextMuted,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+                )
+                Surface(
+                    color = if (settings.imageControlNetPath.isBlank()) AccentSoft else Surface2,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    onClick = {
+                        viewModel.clearControlNet()
+                        showControlModels = false
+                    }
+                ) { Text("Kein ControlNet", modifier = Modifier.padding(14.dp)) }
+                installed.filter {
+                    !it.isLora && (it.name.endsWith(".safetensors", true) || it.name.endsWith(".gguf", true)) &&
+                        (it.name.contains("control", true) || it.name.contains("canny", true) ||
+                            it.name.contains("depth", true) || it.name.contains("openpose", true))
+                }.forEach { model ->
+                    Surface(
+                        color = if (settings.imageControlNetPath == model.file.absolutePath) AccentSoft else Surface2,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        onClick = {
+                            updateControlModel(viewModel, model.file.absolutePath)
+                            showControlModels = false
+                        }
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(model.name, maxLines = 1, fontWeight = FontWeight.SemiBold)
+                            Text("${model.sizeMb} MB", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                        }
+                    }
+                }
+                if (installed.none { it.name.contains("control", true) && !it.isLora }) {
+                    Text(
+                        "Noch kein ControlNet installiert. Im Modelle-Tab nach „controlnet sd15 canny“ suchen.",
+                        style = MaterialTheme.typography.labelSmall, color = TextMuted,
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+
+    if (showTutorial) {
+        TutorialSheet(onDismiss = { showTutorial = false })
+    }
+
     if (showGallery) {
         ModalBottomSheet(onDismissRequest = { showGallery = false }, containerColor = Surface1) {
             Column(Modifier.padding(horizontal = 20.dp)) {
@@ -485,4 +699,8 @@ private fun StudioModelRow(viewModel: AppViewModel, entry: ModelEntry, context: 
             }
         }
     }
+}
+
+private fun updateControlModel(viewModel: AppViewModel, path: String) {
+    viewModel.updateSettings { it.copy(imageControlNetPath = path) }
 }

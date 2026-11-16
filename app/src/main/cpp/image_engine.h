@@ -16,6 +16,10 @@ struct ImageGenParams {
     std::string sampler = "euler_a";
     std::string loraPath;
     float loraScale = 0.8f;
+    std::string controlImagePath;
+    float controlStrength = 0.9f;
+    std::string controlType = "none";
+    bool controlCanny = false;
     std::string outputPath;
 };
 
@@ -27,6 +31,8 @@ public:
     std::string unload();
     std::string statusJson();
     std::string generate(const ImageGenParams& params);
+    std::string loadControlNet(const std::string& path);
+    std::string unloadControlNet();
     void cancel();
 
 private:

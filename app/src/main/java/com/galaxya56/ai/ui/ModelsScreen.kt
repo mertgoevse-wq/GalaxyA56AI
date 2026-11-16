@@ -3,6 +3,7 @@ package com.galaxya56.ai.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -14,7 +15,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,12 +62,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.galaxya56.ai.data.AppSettings
 import com.galaxya56.ai.data.Catalog
 import com.galaxya56.ai.data.DiscoveryKind
 import com.galaxya56.ai.data.DiscoveryModel
+import com.galaxya56.ai.data.ExtensionEntry
+import com.galaxya56.ai.data.ExtensionStatus
+import com.galaxya56.ai.data.Extensions
 import com.galaxya56.ai.data.ModelDoctor
 import com.galaxya56.ai.data.DownloadStatus
 import com.galaxya56.ai.data.InstalledModel
@@ -81,7 +88,7 @@ import com.galaxya56.ai.ui.theme.Surface3
 import com.galaxya56.ai.ui.theme.TextMuted
 import kotlinx.coroutines.delay
 
-private val tabs = listOf("Installiert", "Entdecken", "Katalog", "LoRA")
+private val tabs = listOf("Installiert", "Entdecken", "Katalog", "LoRA", "Extensions")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -187,6 +194,7 @@ fun ModelsScreen(viewModel: AppViewModel) {
                 forcedLora = false
             )
             2 -> CatalogTab(viewModel, context)
+            4 -> ExtensionsTab(onOpenLora = { tab = 3 })
             else -> DiscoveryTab(
                 query = query,
                 onQueryChange = { query = it },
@@ -415,7 +423,16 @@ private fun DiscoveryCard(model: DiscoveryModel, onOpen: () -> Unit) {
             .border(1.dp, Line, RoundedCornerShape(16.dp))
             .clickable(onClick = onOpen)
     ) {
-        Column(Modifier.padding(14.dp)) {
+        Column {
+            model.previewUrls.firstOrNull()?.let { preview ->
+                RemoteImage(
+                    url = preview,
+                    contentDescription = "Beispielbild für ${model.name}",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(154.dp).clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                )
+            }
+            Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     model.name,
@@ -464,6 +481,74 @@ private fun DiscoveryCard(model: DiscoveryModel, onOpen: () -> Unit) {
                     modifier = Modifier.padding(top = 5.dp)
                 )
             }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExtensionsTab(onOpenLora: () -> Unit) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp)) {
+        item {
+            Text("Extensions & Adapter", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "ControlNet, LoRAs, Video-/Audio-Adapter und NPU-Beschleuniger. " +
+                    "Status „integriert“ bedeutet: in diesem Build nutzbar.",
+                style = MaterialTheme.typography.bodySmall, color = TextMuted,
+                modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+            )
+            OutlinedButton(onClick = onOpenLora, modifier = Modifier.fillMaxWidth()) {
+                Text("LoRA-Suche öffnen (Bild + Sprache)")
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        items(Extensions.entries, key = { it.name }) { entry ->
+            ExtensionCard(entry)
+        }
+        item {
+            Text(
+                "Weitere Extensions lassen sich über Hugging Face und Civitai suchen. " +
+                    "Die App lädt nur Dateien, die sie auch ausführen kann; alles andere bleibt Quelle.",
+                style = MaterialTheme.typography.labelSmall, color = TextMuted,
+                modifier = Modifier.padding(top = 12.dp)
+            )
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun ExtensionCard(entry: ExtensionEntry) {
+    val context = LocalContext.current
+    val statusColor = when (entry.status) {
+        ExtensionStatus.READY -> Accent
+        ExtensionStatus.COMPATIBLE -> MaterialTheme.colorScheme.secondary
+        ExtensionStatus.EXPERIMENTAL -> MaterialTheme.colorScheme.tertiary
+        ExtensionStatus.PLANNED -> TextMuted
+    }
+    Surface(
+        color = Surface2,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(entry.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Badge(entry.status.label, statusColor)
+            }
+            Text(entry.kind, style = MaterialTheme.typography.labelSmall, color = TextMuted)
+            Text(entry.description, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+            if (entry.hint.isNotBlank()) {
+                Text(entry.hint, style = MaterialTheme.typography.labelSmall, color = TextMuted, modifier = Modifier.padding(top = 4.dp))
+            }
+            Row(Modifier.padding(top = 4.dp)) {
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { openUrl(context, entry.url) }) {
+                    Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.size(4.dp))
+                    Text("Quelle")
+                }
+            }
         }
     }
 }
@@ -507,6 +592,26 @@ private fun DiscoverySheet(
             OutlinedButton(onClick = { openUrl(context, model.pageUrl) }) { Text("Quelle öffnen") }
             if (model.nsfw) Badge("18+", MaterialTheme.colorScheme.error)
             if (model.uncensored) Badge("uncensored", Accent)
+        }
+        if (model.previewUrls.isNotEmpty()) {
+            Text(
+                "Beispiele von Civitai",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted,
+                modifier = Modifier.padding(top = 12.dp)
+            )
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(top = 6.dp)
+            ) {
+                items(model.previewUrls) { url ->
+                    RemoteImage(
+                        url = url,
+                        contentDescription = "Beispiel",
+                        modifier = Modifier.width(220.dp).height(220.dp).clip(RoundedCornerShape(12.dp))
+                    )
+                }
+            }
         }
         if (model.quantizations.isNotEmpty()) {
             Text(

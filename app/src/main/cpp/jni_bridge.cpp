@@ -200,6 +200,18 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeImageUnload(JNIEnv* env, jo
 }
 
 JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeImageLoadControlNet(
+        JNIEnv* env, jobject, jstring path) {
+    return stringToJstring(env,
+        galaxya56::ImageEngine::instance().loadControlNet(jstringToString(env, path)));
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeImageUnloadControlNet(JNIEnv* env, jobject) {
+    return stringToJstring(env, galaxya56::ImageEngine::instance().unloadControlNet());
+}
+
+JNIEXPORT jstring JNICALL
 Java_com_galaxya56_ai_inference_LocalInference_nativeImageStatus(JNIEnv* env, jobject) {
     return stringToJstring(env, galaxya56::ImageEngine::instance().statusJson());
 }
@@ -208,7 +220,8 @@ JNIEXPORT jstring JNICALL
 Java_com_galaxya56_ai_inference_LocalInference_nativeImageGenerate(
         JNIEnv* env, jobject, jstring prompt, jstring negativePrompt, jint width, jint height,
         jint steps, jfloat cfg, jboolean vaeTiling, jlong seed, jstring sampler,
-        jstring loraPath, jfloat loraScale, jstring outputPath) {
+        jstring loraPath, jfloat loraScale, jstring controlImage, jfloat controlStrength,
+        jstring controlType, jboolean controlCanny, jstring outputPath) {
     galaxya56::ImageGenParams params;
     params.prompt = jstringToString(env, prompt);
     params.negativePrompt = jstringToString(env, negativePrompt);
@@ -221,6 +234,10 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeImageGenerate(
     params.sampler = jstringToString(env, sampler);
     params.loraPath = jstringToString(env, loraPath);
     params.loraScale = loraScale;
+    params.controlImagePath = jstringToString(env, controlImage);
+    params.controlStrength = controlStrength;
+    params.controlType = jstringToString(env, controlType);
+    params.controlCanny = controlCanny == JNI_TRUE;
     params.outputPath = jstringToString(env, outputPath);
     return stringToJstring(env, galaxya56::ImageEngine::instance().generate(params));
 }

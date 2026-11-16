@@ -40,7 +40,8 @@ data class DiscoveryModel(
     val pageUrl: String,
     val tags: List<String> = emptyList(),
     val files: List<RemoteFile> = emptyList(),
-    val quantizations: List<String> = emptyList()
+    val quantizations: List<String> = emptyList(),
+    val previewUrls: List<String> = emptyList()
 ) {
     val isLora: Boolean
         get() = kind.uppercase().let {
@@ -265,10 +266,18 @@ class ModelDiscovery(private val settings: SettingsStore) {
         } ?: emptyList()
         val versions = o.optJSONArray("modelVersions") ?: JSONArray()
         val files = mutableListOf<RemoteFile>()
+        val previews = mutableListOf<String>()
         var baseModel = ""
         for (vi in 0 until versions.length()) {
             val version = versions.optJSONObject(vi) ?: continue
             if (baseModel.isBlank()) baseModel = version.optString("baseModel")
+            version.optJSONArray("images")?.let { images ->
+                for (ii in 0 until images.length()) {
+                    val image = images.optJSONObject(ii) ?: continue
+                    val url = image.optString("url")
+                    if (url.isNotBlank() && previews.size < 6) previews += url
+                }
+            }
             val versionFiles = version.optJSONArray("files") ?: continue
             for (fi in 0 until versionFiles.length()) {
                 val f = versionFiles.optJSONObject(fi) ?: continue
@@ -313,7 +322,8 @@ class ModelDiscovery(private val settings: SettingsStore) {
             pageUrl = "https://civitai.com/models/${o.optInt("id")}",
             tags = tags.take(16),
             files = files.distinctBy { it.url },
-            quantizations = files.mapNotNull { it.quant }.distinct()
+            quantizations = files.mapNotNull { it.quant }.distinct(),
+            previewUrls = previews.distinct()
         )
     }
 

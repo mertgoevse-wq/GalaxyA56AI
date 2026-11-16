@@ -21,6 +21,11 @@ data class StudioRecipe(
     val vaeTiling: Boolean,
     val loraPath: String,
     val loraScale: Float,
+    val controlNetPath: String = "",
+    val controlImagePath: String = "",
+    val controlStrength: Float = 0.9f,
+    val controlType: String = "none",
+    val controlCanny: Boolean = false,
     val backend: String,
     val ms: Long,
     val createdAt: Long = System.currentTimeMillis()
@@ -40,6 +45,11 @@ data class StudioRecipe(
         put("vaeTiling", vaeTiling)
         put("loraPath", loraPath)
         put("loraScale", loraScale.toDouble())
+        put("controlNetPath", controlNetPath)
+        put("controlImagePath", controlImagePath)
+        put("controlStrength", controlStrength.toDouble())
+        put("controlType", controlType)
+        put("controlCanny", controlCanny)
         put("backend", backend)
         put("ms", ms)
         put("createdAt", createdAt)
@@ -63,6 +73,11 @@ data class StudioRecipe(
                 vaeTiling = o.optBoolean("vaeTiling"),
                 loraPath = o.optString("loraPath"),
                 loraScale = o.optDouble("loraScale", 0.8).toFloat(),
+                controlNetPath = o.optString("controlNetPath"),
+                controlImagePath = o.optString("controlImagePath"),
+                controlStrength = o.optDouble("controlStrength", 0.9).toFloat(),
+                controlType = o.optString("controlType", "none"),
+                controlCanny = o.optBoolean("controlCanny"),
                 backend = o.optString("backend"),
                 ms = o.optLong("ms"),
                 createdAt = o.optLong("createdAt")

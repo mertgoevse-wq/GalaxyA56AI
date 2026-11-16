@@ -50,14 +50,14 @@ nach der 18+-Bestätigung in den Optionen.
 Für 8 GB RAM ist SD 1.5 (512×512, 20–30 Schritte) der einzige realistische Kandidat.
 SDXL/Flux sprengen den Speicher.
 
-## Video (Runtime offen)
+## Video (Runtime in diesem Build noch nicht verdrahtet)
 
 | Modell | Typ | Größe | Link |
 |---|---|---|---|
 | AnimateDiff Motion Adapter v1.5.2 | SD-1.5-Erweiterung, 16 Frames | ~1.7 GB | [HF](https://huggingface.co/guoyww/animatediff) |
 | Stable Video Diffusion XT | Image-to-Video | ~9.6 GB | [HF](https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt) |
 
-## Musik & Audio (Runtime offen)
+## Musik & Audio (neuronale Runtime offen; lokaler Psytrance-DSP läuft)
 
 | Modell | Aufgabe | Größe | Link |
 |---|---|---|---|
@@ -71,8 +71,10 @@ SDXL/Flux sprengen den Speicher.
 
 - **GGUF-LoRA** für llama.cpp: in der App unter Modelle → LoRA suchen, herunterladen,
   in den Optionen mit Stärke anwenden. Passt nur, wenn Basisarchitektur übereinstimmt.
-- **safetensors-LoRA** für SD 1.5/SDXL: über Civitai suchen (Typ „LORA“), Download mit
-  Token. Die App verwaltet die Dateien; die Diffusion-Runtime ist noch offen.
+- **safetensors-LoRA** für SD 1.5: über Civitai suchen (Typ „LORA“), Download mit
+  Token, dann im Studio als Bild-LoRA wählen. LCM ist als 4-Step-Pfad verifiziert.
+- **ControlNet**: SD1.5-ControlNet (Canny/Depth/OpenPose/Scribble) im Studio laden,
+  Control-Bild wählen und Stärke setzen; Canny ist auf dem A56 getestet.
 - Civitai-Beispiele: [Detail Tweaker](https://civitai.com/models/122359),
   [Add More Details](https://civitai.com/models/82098),
   [LCM LoRA](https://civitai.com/models/257749).

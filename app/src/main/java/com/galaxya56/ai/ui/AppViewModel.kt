@@ -1,6 +1,8 @@
 package com.galaxya56.ai.ui
 
 import android.app.Application
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.galaxya56.ai.data.AppSettings
@@ -16,6 +18,8 @@ import com.galaxya56.ai.data.ModelDoctorReport
 import com.galaxya56.ai.data.ModelEntry
 import com.galaxya56.ai.data.ModelSource
 import com.galaxya56.ai.data.ModelStore
+import com.galaxya56.ai.data.PsytranceEngine
+import com.galaxya56.ai.data.PsytranceResult
 import com.galaxya56.ai.data.RemoteFile
 import com.galaxya56.ai.data.RemoteModel
 import com.galaxya56.ai.data.SettingsStore
@@ -164,13 +168,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _studioBusy = MutableStateFlow(false)
     val studioBusy: StateFlow<Boolean> = _studioBusy
 
+    private val _upscaleBusy = MutableStateFlow(false)
+    val upscaleBusy: StateFlow<Boolean> = _upscaleBusy
+
     private val _studioError = MutableStateFlow<String?>(null)
     val studioError: StateFlow<String?> = _studioError
+
+    private val _musicResult = MutableStateFlow<PsytranceResult?>(null)
+    val musicResult: StateFlow<PsytranceResult?> = _musicResult
+
+    private val _musicBusy = MutableStateFlow(false)
+    val musicBusy: StateFlow<Boolean> = _musicBusy
+
+    private val _musicProgress = MutableStateFlow(0)
+    val musicProgress: StateFlow<Int> = _musicProgress
 
     private val _localImageModel = MutableStateFlow<String?>(null)
     val localImageModel: StateFlow<String?> = _localImageModel
 
     private var loadedImagePath: String = ""
+    private var loadedControlNetPath: String = ""
     private var loadedPath: String = ""
     private var loadedBackend: String = "CPU"
     private var debugEnnModelPath: String? = null
@@ -536,7 +553,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _status.value = "Generiere lokal ($loadedBackend) …"
 
         val started = System.currentTimeMillis()
-        val result = withContext(Dispatchers.IO) {
+        suspend fun runGeneration() = withContext(Dispatchers.IO) {
             LocalInference.generate(
                 prompt = prompt,
                 maxTokens = s.maxTokens,
@@ -549,6 +566,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        var result = runGeneration()
+        var cpuRetry = false
+        if (!result.ok && !result.stopped && requestedLayers > 0 && loadedBackend.contains("Vulkan", true)) {
+            android.util.Log.w(
+                "A56AI-BACKEND",
+                "LLM Vulkan generation failed (${result.error}); retrying once with CPU"
+            )
+            _status.value = "GPU-Lauf fehlgeschlagen – CPU-Retry …"
+            val cpuLoad = withContext(Dispatchers.IO) {
+                LocalInference.load(path, s.contextSize, threads, 0)
+            }
+            if (cpuLoad.ok) {
+                loadedBackend = cpuLoad.backend
+                loadedPath = path
+                _loadedModel.value = cpuLoad.description
+                // Remove partial GPU tokens only once the CPU reload succeeded;
+                // otherwise a successful CPU run would appear twice. If the
+                // reload fails, keep the partial answer visible.
+                updateMessage(conversationId, messageId) { it.copy(text = "") }
+                val retry = runGeneration()
+                if (retry.ok || !retry.text.isBlank()) {
+                    result = retry
+                    cpuRetry = true
+                    android.util.Log.i(
+                        "A56AI-BACKEND",
+                        "LLM CPU retry succeeded backend=${cpuLoad.backend} tokens=${retry.tokens}"
+                    )
+                } else {
+                    android.util.Log.e("A56AI-BACKEND", "LLM CPU retry failed: ${retry.error}")
+                    result = retry
+                }
+            } else {
+                android.util.Log.e("A56AI-BACKEND", "LLM CPU reload failed: ${cpuLoad.error}")
+            }
+        }
+
         val wall = System.currentTimeMillis() - started
         val meta = buildString {
             append("${result.tokens} Tokens")
@@ -557,6 +610,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             append(" · ${result.promptMs} ms Prompt")
             append(" · ${wall / 1000.0}s gesamt")
             append(" · $loadedBackend")
+            if (cpuRetry) append(" · CPU-Retry")
         }
 
         updateMessage(conversationId, messageId) {
@@ -733,6 +787,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val output = File(modelStore.outputDir, "sd_${System.currentTimeMillis()}.png")
         _studioBusy.value = true
         _studioError.value = null
+        var autoUpscale = false
         viewModelScope.launch {
             try {
                 val seed = if (s.imageSeed >= 0L) s.imageSeed else Random.nextLong(1L, Int.MAX_VALUE.toLong())
@@ -747,11 +802,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         val load = LocalInference.imageLoad(model, s.threads.coerceAtMost(4), s.backend)
                         if (!load.ok) throw IllegalStateException(load.error.ifBlank { "Modell konnte nicht geladen werden" })
                         loadedImagePath = model
+                        loadedControlNetPath = ""
                         _localImageModel.value = "${load.model} · ${if (load.videoSupport) "Bild+Video" else "Bild"} · ${load.loadMs} ms · ${load.backend}"
                         android.util.Log.i(
                             "A56AI-BACKEND",
                             "SD loaded backend=${load.backend} requested=${load.requestedBackend} fallback=${load.fallback} npuDirect=${load.npuDirect}"
                         )
+                    }
+                    if (s.imageControlNetPath.isNotBlank() && loadedControlNetPath != s.imageControlNetPath) {
+                        val control = LocalInference.imageLoadControlNet(s.imageControlNetPath)
+                        if (!control.optBoolean("ok")) {
+                            throw IllegalStateException(
+                                "ControlNet konnte nicht geladen werden: " +
+                                    control.optString("error", "unbekannter Fehler")
+                            )
+                        }
+                        loadedControlNetPath = s.imageControlNetPath
+                        android.util.Log.i("A56AI-BACKEND", "SD ControlNet active ${s.imageControlNetPath}")
                     }
                     val result = LocalInference.imageGenerate(
                         prompt = prompt,
@@ -765,6 +832,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         sampler = s.imageSampler,
                         loraPath = s.imageLoraPath,
                         loraScale = s.imageLoraScale,
+                        controlImage = s.imageControlImagePath,
+                        controlStrength = s.imageControlStrength,
+                        controlType = s.imageControlType,
+                        controlCanny = s.imageControlCanny,
                         outputPath = output.absolutePath
                     )
                     if (!result.ok) throw IllegalStateException(result.error.ifBlank { "Generierung fehlgeschlagen" })
@@ -785,6 +856,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         vaeTiling = s.imageVaeTiling,
                         loraPath = s.imageLoraPath,
                         loraScale = s.imageLoraScale,
+                        controlNetPath = s.imageControlNetPath,
+                        controlImagePath = s.imageControlImagePath,
+                        controlStrength = s.imageControlStrength,
+                        controlType = s.imageControlType,
+                        controlCanny = s.imageControlCanny,
                         backend = result.backend,
                         ms = result.ms
                     )
@@ -799,12 +875,82 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     generated
                 }
                 _studioImage.value = file
+                autoUpscale = s.npuAutoUpscale && resolveEnnModel()?.isFile == true
             } catch (t: Throwable) {
                 _studioError.value = t.message
             } finally {
                 _studioBusy.value = false
             }
+            // Run after the image job released _studioBusy; the NPU pass then
+            // owns the shared busy flag and cannot race a second SD job.
+            if (autoUpscale) upscaleStudioImage()
         }
+    }
+
+    /**
+     * Long-form Progressive Psytrance. This is a deterministic local DSP
+     * renderer; it is intentionally independent of the large neural music
+     * checkpoints that do not fit the A56 yet.
+     */
+    fun generateMusic(prompt: String) {
+        if (_musicBusy.value) return
+        val s = settings.value
+        val seed = if (s.musicSeed >= 0) s.musicSeed else Random.nextLong(1L, Int.MAX_VALUE.toLong())
+        val dir = File(modelStore.outputDir, "music").apply { mkdirs() }
+        val output = File(dir, "psy_${System.currentTimeMillis()}.wav")
+        _musicBusy.value = true
+        _musicProgress.value = 0
+        _studioError.value = null
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    PsytranceEngine.generate(
+                        output = output,
+                        prompt = prompt.ifBlank { "progressive psytrance, rolling bass, hypnotic lead" },
+                        bpm = s.musicBpm,
+                        minutes = s.musicMinutes,
+                        seed = seed
+                    ) { progress -> _musicProgress.value = progress }
+                }
+                _musicResult.value = result
+                _status.value = "Psytrance fertig: ${result.seconds / 60}:${"%02d".format(result.seconds % 60)} · ${result.bpm} BPM"
+            } catch (t: Throwable) {
+                _studioError.value = "Musik: ${t.message}"
+            } finally {
+                _musicBusy.value = false
+            }
+        }
+    }
+
+    fun clearMusic() {
+        _musicResult.value = null
+        _musicProgress.value = 0
+    }
+
+    /** Copies a SAF/USB image into app storage because the native engine needs a path. */
+    fun setControlImageFromUri(uri: android.net.Uri) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val dir = File(getApplication<Application>().filesDir, "control").apply { mkdirs() }
+                    val target = File(dir, "control_${System.currentTimeMillis()}.png")
+                    val input = getApplication<Application>().contentResolver.openInputStream(uri)
+                        ?: throw IllegalStateException("Bild konnte nicht geöffnet werden")
+                    input.use { source -> target.outputStream().use { source.copyTo(it) } }
+                    target.absolutePath
+                }
+            }.onSuccess { path ->
+                updateSettings { it.copy(imageControlImagePath = path) }
+                _status.value = "Control-Bild geladen: ${File(path).name}"
+            }.onFailure { _studioError.value = "Control-Bild: ${it.message}" }
+        }
+    }
+
+    fun clearControlNet() {
+        loadedControlNetPath = ""
+        LocalInference.imageUnloadControlNet()
+        updateSettings { it.copy(imageControlNetPath = "", imageControlImagePath = "") }
+        _status.value = "ControlNet entfernt"
     }
 
     /** 4x upscale of the current studio image with the on-device MIDAS NPU model. */
@@ -815,7 +961,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             _studioError.value = "Erst ein Bild erzeugen oder laden."
             return
         }
-        if (_studioBusy.value) return
+        if (_studioBusy.value || _upscaleBusy.value) return
         val model = resolveEnnModel()
         if (model == null || !model.isFile) {
             _studioError.value = "ENN-Modell fehlt: ${model?.absolutePath ?: "MIDAS .nnc"}"
@@ -823,6 +969,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         val output = File(modelStore.outputDir, "npu_upscale_${System.currentTimeMillis()}.png")
         _studioBusy.value = true
+        _upscaleBusy.value = true
         _studioError.value = null
         android.util.Log.d("A56AI-UI", "NPU upscale busy=true model=${model.absolutePath}")
         viewModelScope.launch {
@@ -842,6 +989,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 _studioError.value = t.message
             } finally {
                 _studioBusy.value = false
+                _upscaleBusy.value = false
                 android.util.Log.d("A56AI-UI", "NPU upscale busy=false error=${_studioError.value}")
             }
         }
@@ -978,6 +1126,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 imageSeed = r.seed,
                 imageLoraPath = r.loraPath,
                 imageLoraScale = r.loraScale,
+                imageControlNetPath = r.controlNetPath,
+                imageControlImagePath = r.controlImagePath,
+                imageControlStrength = r.controlStrength,
+                imageControlType = r.controlType,
+                imageControlCanny = r.controlCanny,
                 imageModelPath = r.modelPath
             )
         }
@@ -1043,6 +1196,52 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshModels() = modelStore.refreshInstalled()
+
+    /**
+     * Imports a directory chosen through the system picker. This is the
+     * USB-C path: the native engine needs a real file, so models are copied
+     * once into the app's external files directory instead of being linked.
+     */
+    fun importFolderFromTree(uri: Uri) {
+        viewModelScope.launch {
+            _status.value = "USB-C/Ordner wird gelesen …"
+            val count = withContext(Dispatchers.IO) {
+                val root = DocumentFile.fromTreeUri(getApplication(), uri) ?: return@withContext 0
+                val accepted = setOf("gguf", "safetensors", "ckpt", "pt", "bin", "nnc")
+                var copied = 0
+                fun visit(dir: DocumentFile, depth: Int) {
+                    if (depth > 3) return
+                    dir.listFiles().forEach { file ->
+                        if (file.isDirectory) {
+                            visit(file, depth + 1)
+                        } else {
+                            val name = file.name ?: return@forEach
+                            val ext = name.substringAfterLast('.', "").lowercase()
+                            if (ext !in accepted) return@forEach
+                            val isLora = name.contains("lora", true) ||
+                                file.uri.toString().contains("lora", true)
+                            val targetDir = if (isLora) modelStore.lorasDir else modelStore.modelsDir
+                            targetDir.mkdirs()
+                            val target = File(targetDir, name.replace(Regex("[^A-Za-z0-9._-]"), "_"))
+                            if (target.exists() && target.length() == file.length()) return@forEach
+                            val input = getApplication<Application>().contentResolver.openInputStream(file.uri)
+                                ?: return@forEach
+                            input.use { source ->
+                                target.outputStream().use { output -> source.copyTo(output, 1 shl 20) }
+                            }
+                            copied++
+                            _status.value = "Importiert: $name (${target.length() / (1024L * 1024L)} MB)"
+                        }
+                    }
+                }
+                visit(root, 0)
+                copied
+            }
+            modelStore.refreshInstalled()
+            _status.value = if (count == 0) "Keine passenden Modelle im Ordner gefunden"
+            else "$count Datei(en) von USB-C/Ordner importiert"
+        }
+    }
 
     // ------------------------------------------------------------------ persistence
 
