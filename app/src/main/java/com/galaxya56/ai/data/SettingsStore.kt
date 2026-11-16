@@ -180,8 +180,16 @@ class SettingsStore(context: Context) {
             // the Keystore for a token that neither changed nor has a legacy
             // plaintext copy waiting to be migrated.
             if (value == oldValue && prefs.getString(name, null) == null) continue
-            if (value.isBlank()) {
-                // An explicit clear is allowed to remove both copies.
+            if (value.isBlank() && oldValue.isBlank()) {
+                // The encrypted store was unreadable at load time, but a legacy
+                // plaintext token exists. Try to migrate it; never delete it
+                // just because an unrelated setting changed.
+                val legacy = prefs.getString(name, null)
+                if (legacy != null && secure.put(name, legacy) && secure.read(name) == legacy) {
+                    prefs.edit().remove(name).commit()
+                }
+            } else if (value.isBlank()) {
+                // The user explicitly cleared a token that was loaded before.
                 secure.put(name, "")
                 prefs.edit().remove(name).commit()
             } else if (secure.put(name, value) && secure.read(name) == value) {
