@@ -18,6 +18,7 @@ import com.galaxya56.ai.data.ModelDoctorReport
 import com.galaxya56.ai.data.ModelEntry
 import com.galaxya56.ai.data.ModelSource
 import com.galaxya56.ai.data.ModelStore
+import com.galaxya56.ai.data.Mp4Encoder
 import com.galaxya56.ai.data.PsytranceEngine
 import com.galaxya56.ai.data.PsytranceResult
 import com.galaxya56.ai.data.RemoteFile
@@ -177,6 +178,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _musicResult = MutableStateFlow<PsytranceResult?>(null)
     val musicResult: StateFlow<PsytranceResult?> = _musicResult
 
+    private val _videoResult = MutableStateFlow<File?>(null)
+    val videoResult: StateFlow<File?> = _videoResult
+
+    private val _videoFramesDir = MutableStateFlow<File?>(null)
+    val videoFramesDir: StateFlow<File?> = _videoFramesDir
+
+    private val _videoBusy = MutableStateFlow(false)
+    val videoBusy: StateFlow<Boolean> = _videoBusy
+
+    private val _videoError = MutableStateFlow<String?>(null)
+    val videoError: StateFlow<String?> = _videoError
+
     private val _musicBusy = MutableStateFlow(false)
     val musicBusy: StateFlow<Boolean> = _musicBusy
 
@@ -187,10 +200,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val localImageModel: StateFlow<String?> = _localImageModel
 
     private var loadedImagePath: String = ""
+    private var loadedMotionPath: String = ""
     private var loadedControlNetPath: String = ""
     private var loadedPath: String = ""
     private var loadedBackend: String = "CPU"
     private var debugEnnModelPath: String? = null
+
+    @Volatile
+    private var forceGpuFailureOnce = false
+
+    @Volatile
+    private var failCpuReloadOnce = false
+
+    /** Debug hook for the A56 retry test; never enabled by normal UI flow. */
+    fun forceNextVulkanFailure() {
+        forceGpuFailureOnce = true
+        android.util.Log.w("A56AI-BACKEND", "LLM Vulkan failure armed for next generation (debug)")
+    }
+
+    fun failNextCpuReload() {
+        failCpuReloadOnce = true
+        android.util.Log.w("A56AI-BACKEND", "LLM CPU reload failure armed for next generation (debug)")
+    }
 
     init {
         loadConversations()
@@ -270,6 +301,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             genMs = result.genMs,
                             backend = load.backend,
                             error = if (result.ok) null else result.error
+                        )
+                        android.util.Log.i(
+                            "A56AI-BACKEND",
+                            "GPU benchmark ${percent}% layers=${if (percent == 100) load.layers else layers} " +
+                                "backend=${load.backend} tok/s=${result.tokensPerSecond} promptMs=${result.promptMs} " +
+                                "error=${result.error}"
                         )
                         _benchmark.value = rows.toList()
                     }
@@ -566,8 +603,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        var result = runGeneration()
+        var result = if (forceGpuFailureOnce) {
+            forceGpuFailureOnce = false
+            // Keep a visible partial answer so the retry test can prove that a
+            // successful CPU reload clears it exactly once (no double output).
+            updateMessage(conversationId, messageId) { it.copy(text = "[GPU-Teilausgabe]") }
+            android.util.Log.w(
+                "A56AI-BACKEND",
+                "LLM Vulkan generation failed (debug-forced); retrying once with CPU"
+            )
+            com.galaxya56.ai.inference.GenerateResult(
+                ok = false, text = "", tokens = 0, promptMs = 0, genMs = 0,
+                stopped = false, contextFull = false, error = "debug-forced Vulkan failure"
+            )
+        } else {
+            runGeneration()
+        }
         var cpuRetry = false
+        var cpuReloadError: String? = null
         if (!result.ok && !result.stopped && requestedLayers > 0 && loadedBackend.contains("Vulkan", true)) {
             android.util.Log.w(
                 "A56AI-BACKEND",
@@ -575,7 +628,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
             _status.value = "GPU-Lauf fehlgeschlagen – CPU-Retry …"
             val cpuLoad = withContext(Dispatchers.IO) {
-                LocalInference.load(path, s.contextSize, threads, 0)
+                if (failCpuReloadOnce) {
+                    failCpuReloadOnce = false
+                    com.galaxya56.ai.inference.LoadResult(
+                        ok = false,
+                        error = "debug-forced CPU reload failure"
+                    )
+                } else {
+                    LocalInference.load(path, s.contextSize, threads, 0)
+                }
             }
             if (cpuLoad.ok) {
                 loadedBackend = cpuLoad.backend
@@ -598,7 +659,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     result = retry
                 }
             } else {
-                android.util.Log.e("A56AI-BACKEND", "LLM CPU reload failed: ${cpuLoad.error}")
+                cpuReloadError = cpuLoad.error.ifBlank { "unbekannter Fehler" }
+                android.util.Log.e("A56AI-BACKEND", "LLM CPU reload failed: $cpuReloadError")
             }
         }
 
@@ -614,13 +676,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         updateMessage(conversationId, messageId) {
-            val finalText = when {
-                result.text.isNotBlank() -> result.text
-                result.error.isNotBlank() -> "Fehler: ${result.error}"
-                result.contextFull -> "Der Kontext ist voll. Erhöhe ihn in den Einstellungen oder starte einen neuen Chat."
-                else -> "(keine Ausgabe)"
+            // A failed CPU reload must not erase the GPU partial answer. Keep
+            // it visible and append the reload error instead of replacing it.
+            val finalText = if (cpuReloadError != null && it.text.isNotBlank()) {
+                it.text + "\n\n[CPU-Retry fehlgeschlagen: $cpuReloadError]"
+            } else {
+                when {
+                    result.text.isNotBlank() -> result.text
+                    result.error.isNotBlank() -> "Fehler: ${result.error}"
+                    result.contextFull -> "Der Kontext ist voll. Erhöhe ihn in den Einstellungen oder starte einen neuen Chat."
+                    else -> "(keine Ausgabe)"
+                }
             }
-            it.copy(text = finalText, meta = meta, error = result.text.isBlank() && result.error.isNotBlank())
+            it.copy(
+                text = finalText,
+                meta = meta,
+                error = cpuReloadError != null || (result.text.isBlank() && result.error.isNotBlank())
+            )
         }
     }
 
@@ -768,7 +840,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Real local txt2img through stable-diffusion.cpp (Vulkan or CPU). */
     fun generateLocalImage(prompt: String, negative: String) {
-        if (prompt.isBlank() || _studioBusy.value) return
+        if (prompt.isBlank() || _studioBusy.value || _videoBusy.value) return
         val s = settings.value
         val model = s.imageModelPath.ifBlank {
             installed.value.firstOrNull {
@@ -885,6 +957,159 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // owns the shared busy flag and cannot race a second SD job.
             if (autoUpscale) upscaleStudioImage()
         }
+    }
+
+    /**
+     * Real local text-to-video with AnimateDiff over stable-diffusion.cpp.
+     * Frames are written as PNG and then muxed into an H.264 MP4 on device.
+     */
+    fun generateLocalVideo(prompt: String, negative: String) {
+        if (prompt.isBlank() || _videoBusy.value || _studioBusy.value) return
+        val s = settings.value
+        val model = s.imageModelPath.ifBlank {
+            installed.value.firstOrNull {
+                !it.isLora && it.file.name.let { name ->
+                    name.endsWith(".gguf", true) || name.endsWith(".safetensors", true)
+                } && it.file.name.let { name ->
+                    name.contains("sd15", true) || name.contains("stable-diffusion", true) ||
+                        name.contains("sd-turbo", true) || name.contains("sdturbo", true)
+                }
+            }?.file?.absolutePath.orEmpty()
+        }
+        val motion = s.videoMotionPath.ifBlank {
+            installed.value.firstOrNull {
+                !it.isLora && it.file.name.let { name ->
+                    name.contains("mm_sd", true) || name.contains("animatediff", true) ||
+                        name.contains("motion", true)
+                }
+            }?.file?.absolutePath.orEmpty()
+        }
+        if (model.isBlank()) {
+            _videoError.value = "Kein SD1.5-Basismodell gefunden. Zuerst ein SD1.5-GGUF im Modelle-Tab installieren."
+            return
+        }
+        if (motion.isBlank()) {
+            _videoError.value = "Kein AnimateDiff-Motion-Modul gefunden. mm_sd_v15_v2.ckpt im Modelle-Tab installieren."
+            return
+        }
+        val runDir = File(modelStore.outputDir, "video/${System.currentTimeMillis()}")
+        val framesDir = File(runDir, "frames")
+        framesDir.mkdirs()
+        _videoBusy.value = true
+        _videoError.value = null
+        _videoResult.value = null
+        _videoFramesDir.value = null
+        _status.value = "Video: lade SD1.5 + AnimateDiff …"
+        viewModelScope.launch {
+            try {
+                val seed = if (s.videoSeed >= 0L) s.videoSeed else Random.nextLong(1L, Int.MAX_VALUE.toLong())
+                val mp4 = withContext(Dispatchers.IO) {
+                    if (loadedImagePath != model || loadedMotionPath != motion) {
+                        val load = LocalInference.imageLoad(
+                            model,
+                            s.threads.coerceAtMost(4),
+                            s.backend,
+                            motion
+                        )
+                        if (!load.ok) {
+                            throw IllegalStateException(
+                                "Modell/Motion-Modul konnte nicht geladen werden: " +
+                                    load.error.ifBlank { "unbekannter Fehler" }
+                            )
+                        }
+                        loadedImagePath = model
+                        loadedMotionPath = motion
+                        loadedControlNetPath = ""
+                        _localImageModel.value = "${load.model} · ${if (load.videoSupport) "Bild+Video" else "Bild"} · ${load.loadMs} ms · ${load.backend}"
+                        if (!load.videoSupport) {
+                            throw IllegalStateException(
+                                "AnimateDiff wurde geladen, aber stable-diffusion.cpp meldet keinen Video-Pfad. " +
+                                    "SD1.5-Basismodell und Motion-Modul prüfen."
+                            )
+                        }
+                    }
+                    _status.value = "Video: ${s.videoFrames} Frames · ${s.videoWidth}×${s.videoHeight} · ${s.videoSteps} Steps"
+                    var result = LocalInference.imageGenerateVideo(
+                        prompt = prompt,
+                        negativePrompt = negative,
+                        width = s.videoWidth,
+                        height = s.videoHeight,
+                        frames = s.videoFrames.coerceIn(8, 16),
+                        fps = s.videoFps,
+                        steps = s.videoSteps,
+                        cfg = s.videoCfg,
+                        seed = seed,
+                        sampler = s.videoSampler,
+                        loraPath = s.imageLoraPath,
+                        loraScale = s.imageLoraScale,
+                        outputDir = framesDir.absolutePath
+                    )
+                    if (!result.ok && s.backend != "cpu" &&
+                        (result.error.contains("Vulkan", true) || result.error.contains("backend", true))
+                    ) {
+                        android.util.Log.w(
+                            "A56AI-BACKEND",
+                            "Video Vulkan generation failed (${result.error}); retrying once with CPU"
+                        )
+                        val cpuLoad = LocalInference.imageLoad(
+                            model, s.threads.coerceAtMost(4), "cpu", motion
+                        )
+                        if (!cpuLoad.ok) {
+                            throw IllegalStateException(
+                                "Vulkan-Videofehler; CPU-Reload fehlgeschlagen: ${cpuLoad.error}"
+                            )
+                        }
+                        loadedImagePath = model
+                        loadedMotionPath = motion
+                        result = LocalInference.imageGenerateVideo(
+                            prompt = prompt,
+                            negativePrompt = negative,
+                            width = s.videoWidth,
+                            height = s.videoHeight,
+                            frames = s.videoFrames.coerceIn(8, 16),
+                            fps = s.videoFps,
+                            steps = s.videoSteps,
+                            cfg = s.videoCfg,
+                            seed = seed,
+                            sampler = s.videoSampler,
+                            loraPath = s.imageLoraPath,
+                            loraScale = s.imageLoraScale,
+                            outputDir = framesDir.absolutePath
+                        )
+                    }
+                    if (!result.ok) throw IllegalStateException(result.error.ifBlank { "Videogenerierung fehlgeschlagen" })
+                    val pngs = framesDir.listFiles { f -> f.isFile && f.name.endsWith(".png") }
+                        ?.sortedBy { it.name }.orEmpty()
+                    if (pngs.size < 8) {
+                        throw IllegalStateException("Nur ${pngs.size} Frames erzeugt; mindestens 8 erwartet")
+                    }
+                    _videoFramesDir.value = framesDir
+                    val output = File(runDir, "clip_${result.seed}.mp4")
+                    val encoded = Mp4Encoder.encode(pngs, output, result.fps.coerceAtLeast(1))
+                    if (!encoded.ok) {
+                        throw IllegalStateException("MP4-Export: ${encoded.error} · Frames: ${framesDir.absolutePath}")
+                    }
+                    _status.value = "Video fertig: ${result.width}×${result.height} · ${pngs.size} Frames · ${result.ms / 1000.0}s Diffusion · ${output.name}"
+                    android.util.Log.i(
+                        "A56AI-BACKEND",
+                        "SD video done seed=${result.seed} frames=${pngs.size} fps=${result.fps} ms=${result.ms} file=${output.absolutePath}"
+                    )
+                    output
+                }
+                _videoResult.value = mp4
+            } catch (t: Throwable) {
+                _videoError.value = t.message ?: "Videogenerierung fehlgeschlagen"
+                android.util.Log.e("A56AI-BACKEND", "Video failed: ${t.message}", t)
+            } finally {
+                _videoBusy.value = false
+            }
+        }
+    }
+
+    fun clearVideo() {
+        _videoResult.value = null
+        _videoFramesDir.value = null
+        _videoError.value = null
     }
 
     /**

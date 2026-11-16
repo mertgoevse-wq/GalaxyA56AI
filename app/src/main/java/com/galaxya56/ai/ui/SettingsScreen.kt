@@ -211,6 +211,27 @@ fun SettingsScreen(viewModel: AppViewModel) {
             }
         }
 
+        SettingsCard("NPU-Upscale") {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Auto-4×-Upscale nach Bild", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Nutzt den geräteeigenen MIDAS-ENN-Pfad (256→1024). " +
+                            "Wenn der Pfad fehlt, bleibt das erzeugte Bild unverändert.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextMuted
+                    )
+                }
+                Switch(
+                    checked = settings.npuAutoUpscale,
+                    onCheckedChange = { viewModel.updateSettings { s -> s.copy(npuAutoUpscale = it) } }
+                )
+            }
+        }
+
         SettingsCard("Bild-Runtime (SD1.5)") {
             Text(
                 "Lokale Diffusion über stable-diffusion.cpp. Kleinere Auflösung und weniger Steps " +

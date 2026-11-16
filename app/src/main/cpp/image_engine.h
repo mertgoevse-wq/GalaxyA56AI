@@ -23,14 +23,32 @@ struct ImageGenParams {
     std::string outputPath;
 };
 
+struct VideoGenParams {
+    std::string prompt;
+    std::string negativePrompt;
+    int width = 256;
+    int height = 256;
+    int frames = 16;
+    int fps = 8;
+    int steps = 8;
+    float cfg = 1.5f;
+    long long seed = -1;
+    std::string sampler = "lcm";
+    std::string loraPath;
+    float loraScale = 0.8f;
+    std::string outputDir;
+};
+
 class ImageEngine {
 public:
     static ImageEngine& instance();
 
-    std::string loadModel(const std::string& path, int threads, const std::string& backendMode);
+    std::string loadModel(const std::string& path, int threads, const std::string& backendMode,
+                          const std::string& motionModulePath = "");
     std::string unload();
     std::string statusJson();
     std::string generate(const ImageGenParams& params);
+    std::string generateVideo(const VideoGenParams& params);
     std::string loadControlNet(const std::string& path);
     std::string unloadControlNet();
     void cancel();

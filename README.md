@@ -10,7 +10,8 @@ einer Oberfläche im Stil von ChatGPT/Claude.
 > (Qwen2.5-0.5B Q4_K_M: 10,3 tok/s mit 89 GPU-Layern). Die NPU ist über NNAPI **nicht**
 > exponiert, aber über Samsungs öffentliche **ENN-Vendor-API** erreichbar: Der
 > geräteeigene MIDAS-4×-Upscaler läuft auf der NPU (256→1024 in ~0,2 s). Lokale
-> Bildgenerierung läuft über **stable-diffusion.cpp** (SD1.5, CPU/Vulkan). Details unten.
+> Bildgenerierung läuft über **stable-diffusion.cpp** (SD1.5, CPU/Vulkan), lokale
+> Videogenerierung über **AnimateDiff + MediaCodec** (8 Frames, 256², MP4). Details unten.
 
 ---
 
@@ -30,7 +31,7 @@ einer Oberfläche im Stil von ChatGPT/Claude.
 | Lokale Bildgenerierung (SD 1.5 / SD-Turbo) | ✅ SD1.5, ⚠️ SD-Turbo | `stable-diffusion.cpp` als separate `libstable-diffusion.so`; SD1.5 läuft, SD-Turbo lädt und rechnet, liefert mit diesem GGUF-Export aber nur Rauschen (Zero-Terminal-SNR-Metadaten fehlen). Modellauswahl, CFG, Steps, **VAE-Tiling** (512×512 getestet). |
 | ControlNet (SD1.5) | ✅ auf A56 verifiziert | Canny-ControlNet (`control_v11p_sd15_canny.pth`, 1,4 GB) geladen, 256×256/4 Steps/LCM/CFG 1,5 in **25,1 s** auf Vulkan; Control-Bild, Stärke 0,9 und Typ `canny` landen in JSON/PNG. |
 | Lokale Musik (Progressive Psytrance) | ✅ auf A56 verifiziert | Lokaler DSP-Renderer `PsytranceEngine`: 44,1 kHz Stereo-WAV, 138 BPM, **4:30** (270 s), 46 MB, Mean −14,3 dB / Peak −3,3 dB, ohne Cloud. Kein neuronales Musikmodell. |
-| Lokale Videogenerierung | ⚠️ Katalog/experimentell | AnimateDiff-/Wan-Kandidaten und Downloads vorhanden; in diesem Build keine Video-Runtime und keine MP4-Ausgabe. |
+| Lokale Videogenerierung | ✅ 8 Frames / ⚠️ 16 Frames | AnimateDiff `mm_sd_v15_v2.ckpt` + SD1.5, 8 Frames bei 256², Vulkan0, H.264-MP4 über `MediaCodec`/`MediaMuxer`. 8 Frames/4 Steps: **233–339 s**; 16 Frames kippen auf 8 GB RAM in GPU-Stall/LMK. Details: [`docs/VIDEO_RUNTIME.md`](docs/VIDEO_RUNTIME.md). |
 | Bild-Extensions / Tutorials | ✅ implementiert | ControlNet-Karte, Modell-/Bildauswahl, Stärke, Typ-Chips, Canny; 6-seitiges Handbuch mit Checklisten und Werkstatt-Notizen. |
 | Speicher, ZRAM & USB-C | ✅ Diagnose/Import | Liest RAM, freien App-Speicher, `/proc/swaps`, ZRAM und Wechselmedien; USB-C/SD-Import per SAF (`OpenDocumentTree`). ZRAM/Swap kann ohne Root nicht aktiviert werden. |
 | Sichere Tokens | ✅ gehärtet | AES/GCM im Android Keystore; Klartext-Migration löscht nur nach verifiziertem Rücklesen, bei Keystore-Fehler bleiben alte Werte erhalten. |
@@ -42,8 +43,8 @@ Auf dem **Galaxy A56 (SM-A566B, Android 17)** installiert und getestet:
 - CPU-Inferenz: Qwen2.5-0.5B Q4_K_M, 7 Threads → **10,7 tok/s**.
 - Vulkan-Inferenz: 89 GPU-Layer → **10,3 tok/s**, Backend „CPU+Vulkan Samsung Xclipse 540“.
 - ENN/NPU: MIDAS-4×-Upscaler 256×256→1024×1024 in **189–259 ms**, HumanSeg 288×288 in **6 ms**.
-- APK: 79 MB (aktueller Debug-Build inkl. SD-Runtime + ENN); frühere Builds: Vulkan 70,9 MB,
-  CPU 62,3 MB.
+- APK: **115 MB** (Debug-Build inkl. SD-/Video-Runtime + ENN); frühere Builds: Vulkan 70,9 MB,
+  CPU 62,3 MB. Die Größe kommt vor allem von den nativen Vulkan-/SD-Bibliotheken, nicht von Modellen.
 - **512×512 / SD1.5 Q4_0 / Vulkan**, 8 Steps, CFG 7: **107,1 s** (4 Steps: 85,8 s);
   Peak PSS **3,58 GiB**, Peak GL/Vulkan **3,38 GiB**, `VmHWM` **1,67 GiB**.
 - **VAE-Tiling** bei 512×512/8 Steps: **122,4 s**, Peak GL **2,44 GiB** statt 3,38 GiB;
@@ -52,6 +53,11 @@ Auf dem **Galaxy A56 (SM-A566B, Android 17)** installiert und getestet:
   Die Ausgabe war in beiden Fällen nur Rauschen/Brei; das ist **kein gültiger Qualitätsvergleich**.
   Ursache: Der GGUF-Export enthält weder `alphas_cumprod` (Zero-Terminal-SNR) noch `v_pred`-Markierungen.
 - **SD1.5 Q4_0** gleicher 4-Step-Lauf mit CFG 1: **44,9 s**, aber sehr weich – CFG 7 bleibt der bessere Default.
+- **AnimateDiff** `mm_sd_v15_v2.ckpt` (1,6 GB) + DreamShaper8 LCM Q4_0, 256×256, **8 Frames**, LCM/4 Steps, Vulkan0: **233,3 s** (zweiter Lauf 339,4 s inkl. Modellladen und VAE). Ergebnis: 8 PNG-Frames + **H.264-MP4, 256×256, 8 fps, 8 Frames, 1,0 s**. Der 16-Frame-Lauf blieb bei 8 GB RAM nach dem Motion-Load in einem Vulkan-Graph hängen und wurde später vom System mit `LOW_MEMORY` beendet; 16 Frames sind auf diesem Gerät **nicht zuverlässig**.
+- **Auto-NPU-Upscale** nach Bildgenerierung: MIDAS 4× 256→1024 in **243 ms** (Load 304 ms), automatisch ausgelöst, Ergebnis 1024².
+- **Vulkan→CPU-Retry** (erzwungener Fehler): GPU-Load mit 99 Layern, genau **ein** CPU-Retry, 9 Tokens, Meta `CPU-Retry`; keine doppelte Ausgabe. Bei erzwungenem CPU-Reload-Fehler bleibt `[GPU-Teilausgabe]` sichtbar und wird nur um die Fehlermeldung ergänzt.
+- **GPU-Layer-Benchmark** (Qwen2.5-0.5B, 2048 Kontext, 32 Tokens): 0 % = 1,17 tok/s (kalt); 25/50/75 % = 1,34/1,72/2,55 tok/s (Teil-Offload, Vulkan); 100 % (24 Layer) = **16,44 tok/s**. Die 0-%-Zeile ist wegen Kaltstart/Systemlast nicht repräsentativ; frühere CPU-Messung mit 7 Threads: 10,7 tok/s. Der Benchmark deckte außerdem einen Reporting-Bug auf: Die GPU-Erkennung wurde hinter `std::call_once` in lokalen Variablen gehalten und nach dem ersten Load auf 0 zurückgesetzt; sie ist jetzt statisch und die 25–100-%-Zeilen melden korrekt `CPU+Vulkan Samsung Xclipse 540`.
+- **NPU-Benchmark** (MIDAS): Load 50 ms, Exec **202 ms** für 256→1024.
 - Chat-UI auf Gerät getestet: Qwen2.5-0.5B Q4_K_M, **12,1 tok/s** Streaming-Antwort.
 
 ---
@@ -65,7 +71,8 @@ Auf dem **Galaxy A56 (SM-A566B, Android 17)** installiert und getestet:
 - **Studio**: Bild-, Video- und Musik-Tab mit Prompt-Feldern, Modellkatalog,
   lokaler SD1.5-Generierung (SD-Turbo lädt, Qualität ist mit dem getesteten Export noch unbrauchbar),
   auswählbarem Checkpoint, CFG/Steps/VAE-Tiling, **ControlNet**, **NPU-4×-Upscale**,
-  **Progressive-Psytrance-Renderer** (4:30, 44,1 kHz, Wiedergabe) und Cloud-Bildgenerierung.
+  **AnimateDiff-Video** (8–16 Frames, 256², MP4/Videoplayback) und
+  **Progressive-Psytrance-Renderer** (4:30, 44,1 kHz, Wiedergabe) sowie Cloud-Bildgenerierung.
 - **Extensions-Tab**: ControlNet, LCM-LoRA, IP-Adapter, ADetailer, AnimateDiff, Wan,
   MusicGen/ACE-Step, Whisper und LLM-LoRAs mit ehrlichem Status (integriert / kompatibel /
   experimentell / geplant) und Quellenlinks.
@@ -174,6 +181,8 @@ zusätzlich beliebige GGUF- und LoRA-Dateien über die Suche laden.
 
 > Design und NPU-Recherche: [`DESIGN.md`](DESIGN.md) und
 > [`docs/NPU_EXYNOS_1580.md`](docs/NPU_EXYNOS_1580.md).
+> Video-Laufzeit und Grenzen: [`docs/VIDEO_RUNTIME.md`](docs/VIDEO_RUNTIME.md).
+> Stitch/REA-Status: [`docs/EXTERNAL_TOOLS.md`](docs/EXTERNAL_TOOLS.md).
 
 > Für den lokalen Betrieb auf 8 GB RAM: 1B–3B-Modelle in Q4_K_M. 3B belegt ~2 GB Datei
 > plus ~1–2 GB Kontext/KV-Cache. 7B/8B sind auf dem A56 technisch möglich, aber langsam
@@ -201,14 +210,18 @@ zusätzlich beliebige GGUF- und LoRA-Dateien über die Suche laden.
 
 ## Offene Arbeiten
 
-1. **Video-Runtime**: AnimateDiff/Wan sind im Katalog, aber es gibt noch keine lokale
-   Frame-/MP4-Pipeline. Nächster sinnvoller Schritt: 8–16 Frames bei 256², danach
-   MediaCodec-Encode und Thermikmessung.
+1. **Video-Runtime**: AnimateDiff 8 Frames/256²/MP4 läuft; 16 Frames sind auf 8 GB
+   RAM nicht zuverlässig (GPU-Stall/LMK). Nächster Schritt: Sliding-Window oder ein
+   kleineres Motion-Modul, damit 16 Frames ohne Peak-Spike funktionieren; Wan 1.3B
+   bleibt wegen separater Komponenten und RAM riskant. Messwerte: [`docs/VIDEO_RUNTIME.md`](docs/VIDEO_RUNTIME.md).
 2. **Neuronale Musik**: MusicGen Small / ACE-Step brauchen eine eigene Runtime; der
    Psytrance-Renderer ist bewusst DSP und kein neuronaler Ersatz.
 3. **NPU-Diffusion**: Der öffentliche ENN-Compiler und LiteRT/ExecuTorch unterstützen
    den Exynos 1580 (Stand November 2026) nicht. Details, Quellen und Messwerte in
    [`docs/NPU_EXYNOS_1580.md`](docs/NPU_EXYNOS_1580.md).
+4. **Externe Design-/REA-Tools**: REA ist für die JNI-Bindings gelaufen; Stitch bleibt
+   ohne Google-OAuth blockiert. Kein erfolgreicher Stitch-API-Lauf wurde behauptet.
+   Status und Evidence-ID: [`docs/EXTERNAL_TOOLS.md`](docs/EXTERNAL_TOOLS.md).
 4. **Bild-Runtime**: SDXL/Flux auf 8 GB RAM, automatische Modell-Empfehlung nach freiem
    RAM und eine echte layerweise CPU/GPU-Aufteilung für SD.
 5. **Benchmark-Suite**: Prompt-Länge, Threads, GPU-Layer, Steps/CFG, VAE-Tiling und Thermik

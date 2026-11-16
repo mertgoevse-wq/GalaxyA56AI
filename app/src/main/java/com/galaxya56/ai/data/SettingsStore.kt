@@ -41,6 +41,15 @@ data class AppSettings(
     val imageControlStrength: Float = 0.9f,
     val imageControlType: String = "none",
     val imageControlCanny: Boolean = false,
+    val videoMotionPath: String = "",
+    val videoFrames: Int = 8,
+    val videoFps: Int = 8,
+    val videoWidth: Int = 256,
+    val videoHeight: Int = 256,
+    val videoSteps: Int = 8,
+    val videoCfg: Float = 1.5f,
+    val videoSampler: String = "lcm",
+    val videoSeed: Long = -1L,
     val musicBpm: Int = 138,
     val musicMinutes: Float = 4.5f,
     val musicSeed: Long = -1L,
@@ -105,6 +114,15 @@ class SettingsStore(context: Context) {
         imageControlStrength = prefs.getFloat("imageControlStrength", 0.9f),
         imageControlType = prefs.getString("imageControlType", "none") ?: "none",
         imageControlCanny = prefs.getBoolean("imageControlCanny", false),
+        videoMotionPath = prefs.getString("videoMotionPath", "") ?: "",
+        videoFrames = prefs.getInt("videoFrames", 8),
+        videoFps = prefs.getInt("videoFps", 8),
+        videoWidth = prefs.getInt("videoWidth", 256),
+        videoHeight = prefs.getInt("videoHeight", 256),
+        videoSteps = prefs.getInt("videoSteps", 8),
+        videoCfg = prefs.getFloat("videoCfg", 1.5f),
+        videoSampler = prefs.getString("videoSampler", "lcm") ?: "lcm",
+        videoSeed = prefs.getLong("videoSeed", -1L),
         musicBpm = prefs.getInt("musicBpm", 138),
         musicMinutes = prefs.getFloat("musicMinutes", 4.5f),
         musicSeed = prefs.getLong("musicSeed", -1L),
@@ -156,6 +174,15 @@ class SettingsStore(context: Context) {
             putFloat("imageControlStrength", next.imageControlStrength)
             putString("imageControlType", next.imageControlType)
             putBoolean("imageControlCanny", next.imageControlCanny)
+            putString("videoMotionPath", next.videoMotionPath)
+            putInt("videoFrames", next.videoFrames)
+            putInt("videoFps", next.videoFps)
+            putInt("videoWidth", next.videoWidth)
+            putInt("videoHeight", next.videoHeight)
+            putInt("videoSteps", next.videoSteps)
+            putFloat("videoCfg", next.videoCfg)
+            putString("videoSampler", next.videoSampler)
+            putLong("videoSeed", next.videoSeed)
             putInt("musicBpm", next.musicBpm)
             putFloat("musicMinutes", next.musicMinutes)
             putLong("musicSeed", next.musicSeed)

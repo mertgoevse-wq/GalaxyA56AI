@@ -49,6 +49,18 @@ data class ImageGenerateResult(
     val error: String = ""
 )
 
+data class VideoGenerateResult(
+    val ok: Boolean,
+    val width: Int = 0,
+    val height: Int = 0,
+    val frames: Int = 0,
+    val fps: Int = 0,
+    val ms: Long = 0,
+    val seed: Long = -1,
+    val dir: String = "",
+    val error: String = ""
+)
+
 data class GenerateResult(
     val ok: Boolean,
     val text: String,
@@ -94,7 +106,12 @@ object LocalInference {
     external fun nativeEnnProbe(): String
     external fun nativeEnnBenchmark(path: String): String
     external fun nativeEnnUpscale(inputPath: String, outputPath: String, modelPath: String): String
-    external fun nativeImageLoad(path: String, threads: Int, backendMode: String): String
+    external fun nativeImageLoad(
+        path: String,
+        threads: Int,
+        backendMode: String,
+        motionModulePath: String
+    ): String
     external fun nativeImageUnload(): String
     external fun nativeImageLoadControlNet(path: String): String
     external fun nativeImageUnloadControlNet(): String
@@ -116,6 +133,21 @@ object LocalInference {
         controlType: String,
         controlCanny: Boolean,
         outputPath: String
+    ): String
+    external fun nativeImageGenerateVideo(
+        prompt: String,
+        negativePrompt: String,
+        width: Int,
+        height: Int,
+        frames: Int,
+        fps: Int,
+        steps: Int,
+        cfg: Float,
+        seed: Long,
+        sampler: String,
+        loraPath: String,
+        loraScale: Float,
+        outputDir: String
     ): String
     external fun nativeImageCancel()
 
@@ -204,8 +236,13 @@ object LocalInference {
         )
     }
 
-    fun imageLoad(path: String, threads: Int, backendMode: String = "auto"): ImageLoadResult {
-        val o = JSONObject(nativeImageLoad(path, threads, backendMode))
+    fun imageLoad(
+        path: String,
+        threads: Int,
+        backendMode: String = "auto",
+        motionModulePath: String = ""
+    ): ImageLoadResult {
+        val o = JSONObject(nativeImageLoad(path, threads, backendMode, motionModulePath))
         return ImageLoadResult(
             ok = o.optBoolean("ok"),
             model = o.optString("model"),
@@ -273,6 +310,40 @@ object LocalInference {
             controlImage = o.optString("controlImage"),
             controlStrength = o.optDouble("controlStrength", 0.9).toFloat(),
             controlType = o.optString("controlType"),
+            error = o.optString("error")
+        )
+    }
+
+    fun imageGenerateVideo(
+        prompt: String,
+        negativePrompt: String,
+        width: Int,
+        height: Int,
+        frames: Int,
+        fps: Int,
+        steps: Int,
+        cfg: Float,
+        seed: Long,
+        sampler: String,
+        loraPath: String,
+        loraScale: Float,
+        outputDir: String
+    ): VideoGenerateResult {
+        val o = JSONObject(
+            nativeImageGenerateVideo(
+                prompt, negativePrompt, width, height, frames, fps, steps, cfg, seed,
+                sampler, loraPath, loraScale, outputDir
+            )
+        )
+        return VideoGenerateResult(
+            ok = o.optBoolean("ok"),
+            width = o.optInt("width"),
+            height = o.optInt("height"),
+            frames = o.optInt("frames"),
+            fps = o.optInt("fps"),
+            ms = o.optLong("ms"),
+            seed = o.optLong("seed", -1),
+            dir = o.optString("dir"),
             error = o.optString("error")
         )
     }

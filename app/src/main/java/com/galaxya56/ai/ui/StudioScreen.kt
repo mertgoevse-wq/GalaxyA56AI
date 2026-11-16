@@ -2,6 +2,8 @@ package com.galaxya56.ai.ui
 
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -42,6 +44,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -54,6 +57,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.galaxya56.ai.data.Catalog
 import com.galaxya56.ai.data.ModelEntry
@@ -73,6 +77,7 @@ fun StudioScreen(viewModel: AppViewModel) {
     var prompt by rememberSaveable { mutableStateOf("") }
     var negative by rememberSaveable { mutableStateOf("") }
     var showImageModels by remember { mutableStateOf(false) }
+    var showMotionModels by remember { mutableStateOf(false) }
     var showControlModels by remember { mutableStateOf(false) }
     var showGallery by remember { mutableStateOf(false) }
     var showTutorial by remember { mutableStateOf(false) }
@@ -91,6 +96,10 @@ fun StudioScreen(viewModel: AppViewModel) {
     val musicResult by viewModel.musicResult.collectAsStateWithLifecycle()
     val musicBusy by viewModel.musicBusy.collectAsStateWithLifecycle()
     val musicProgress by viewModel.musicProgress.collectAsStateWithLifecycle()
+    val videoResult by viewModel.videoResult.collectAsStateWithLifecycle()
+    val videoFramesDir by viewModel.videoFramesDir.collectAsStateWithLifecycle()
+    val videoBusy by viewModel.videoBusy.collectAsStateWithLifecycle()
+    val videoError by viewModel.videoError.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var playing by remember { mutableStateOf(false) }
@@ -281,6 +290,87 @@ fun StudioScreen(viewModel: AppViewModel) {
             }
         }
 
+        if (mode == ModelType.VIDEO) {
+            Spacer(Modifier.height(12.dp))
+            Surface(color = Surface2, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("AnimateDiff · SD1.5", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "8–16 Frames, 256×256, H.264-MP4 über MediaCodec. Das Motion-Modul läuft zusätzlich zum Basismodell.",
+                                style = MaterialTheme.typography.labelSmall, color = TextMuted
+                            )
+                        }
+                        Pill("8 GB RAM", Surface1, TextMuted)
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(onClick = { showImageModels = true }) {
+                            Text(
+                                "Basis: " + (settings.imageModelPath.substringAfterLast('/').ifBlank { "Auto (SD1.5)" }).take(20),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                        OutlinedButton(onClick = { showMotionModels = true }) {
+                            Text(
+                                "Motion: " + (settings.videoMotionPath.substringAfterLast('/').ifBlank { "wählen" }).take(18),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                    Text(
+                        "Frames ${settings.videoFrames} · ${settings.videoWidth}×${settings.videoHeight} · " +
+                            "${settings.videoSteps} Steps · CFG ${"%.1f".format(settings.videoCfg)} · ${settings.videoFps} fps",
+                        style = MaterialTheme.typography.labelSmall, color = Accent,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    Slider(
+                        value = settings.videoFrames.toFloat(),
+                        onValueChange = { value ->
+                            viewModel.updateSettings { it.copy(videoFrames = value.toInt().coerceIn(8, 16)) }
+                        },
+                        valueRange = 8f..16f,
+                        steps = 7
+                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        listOf("lcm", "euler_a", "euler").forEach { sampler ->
+                            Pill(
+                                sampler,
+                                if (settings.videoSampler == sampler) AccentSoft else Surface1,
+                                if (settings.videoSampler == sampler) Accent else TextMuted
+                            ) { viewModel.updateSettings { it.copy(videoSampler = sampler) } }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "${settings.videoSteps} Steps",
+                            style = MaterialTheme.typography.labelSmall, color = TextMuted
+                        )
+                    }
+                    Slider(
+                        value = settings.videoSteps.toFloat(),
+                        onValueChange = { value ->
+                            viewModel.updateSettings { it.copy(videoSteps = value.toInt().coerceIn(2, 12)) }
+                        },
+                        valueRange = 2f..12f,
+                        steps = 9
+                    )
+                    Text(
+                        "Hinweis: 16 Frames bei 256² brauchen deutlich mehr RAM als ein Einzelbild. " +
+                            "Wenn der Lauf abgebrochen wird, zuerst Frames auf 8 senken; die Grenze wird im Log dokumentiert.",
+                        style = MaterialTheme.typography.labelSmall, color = TextMuted
+                    )
+                }
+            }
+        }
+
         if (mode == ModelType.IMAGE) {
         Spacer(Modifier.height(12.dp))
         Surface(color = Surface2, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
@@ -354,14 +444,22 @@ fun StudioScreen(viewModel: AppViewModel) {
                 unfocusedBorderColor = MaterialTheme.colorScheme.outline
             )
         )
-        if (mode == ModelType.IMAGE) {
+        if (mode != ModelType.MUSIC) {
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
-                    value = if (settings.imageSeed < 0) "" else settings.imageSeed.toString(),
+                    value = if (mode == ModelType.VIDEO) {
+                        if (settings.videoSeed < 0) "" else settings.videoSeed.toString()
+                    } else {
+                        if (settings.imageSeed < 0) "" else settings.imageSeed.toString()
+                    },
                     onValueChange = { text ->
                         val value = text.trim().toLongOrNull() ?: -1L
-                        viewModel.updateSettings { it.copy(imageSeed = value) }
+                        if (mode == ModelType.VIDEO) {
+                            viewModel.updateSettings { it.copy(videoSeed = value) }
+                        } else {
+                            viewModel.updateSettings { it.copy(imageSeed = value) }
+                        }
                     },
                     label = { Text("Seed (-1 = zufällig)") },
                     singleLine = true,
@@ -374,7 +472,13 @@ fun StudioScreen(viewModel: AppViewModel) {
                         unfocusedBorderColor = MaterialTheme.colorScheme.outline
                     )
                 )
-                OutlinedButton(onClick = { viewModel.updateSettings { it.copy(imageSeed = -1L) } }) {
+                OutlinedButton(onClick = {
+                    if (mode == ModelType.VIDEO) {
+                        viewModel.updateSettings { it.copy(videoSeed = -1L) }
+                    } else {
+                        viewModel.updateSettings { it.copy(imageSeed = -1L) }
+                    }
+                }) {
                     Text("Zufall")
                 }
             }
@@ -396,15 +500,28 @@ fun StudioScreen(viewModel: AppViewModel) {
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
-                onClick = { viewModel.generateLocalImage(prompt, negative) },
-                enabled = prompt.isNotBlank() && !busy && mode == ModelType.IMAGE,
+                onClick = {
+                    if (mode == ModelType.VIDEO) {
+                        viewModel.generateLocalVideo(prompt, negative)
+                    } else {
+                        viewModel.generateLocalImage(prompt, negative)
+                    }
+                },
+                enabled = prompt.isNotBlank() && !busy && !videoBusy && mode != ModelType.MUSIC,
                 modifier = Modifier.weight(1f)
             ) {
-                if (busy) {
+                if (busy || videoBusy) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.size(8.dp))
                 }
-                Text(if (busy) "Generiere …" else "Lokal SD1.5")
+                Text(
+                    when {
+                        videoBusy -> "Video läuft …"
+                        busy -> "Generiere …"
+                        mode == ModelType.VIDEO -> "Lokal AnimateDiff"
+                        else -> "Lokal SD1.5"
+                    }
+                )
             }
             OutlinedButton(
                 onClick = { viewModel.generateImage(prompt, negative) },
@@ -425,9 +542,21 @@ fun StudioScreen(viewModel: AppViewModel) {
                 modifier = Modifier.padding(top = 6.dp)
             )
         }
-        if (mode != ModelType.IMAGE) {
+        if (mode == ModelType.VIDEO) {
             Text(
-                "Für diesen Modus ist in diesem Build noch keine lokale Runtime eingebunden. Die Modelle unten sind die passenden Kandidaten und lassen sich bereits herunterladen.",
+                when {
+                    videoBusy -> "AnimateDiff sampling + MP4-Export laufen lokal. ${settings.videoFrames} Frames bei ${settings.videoWidth}×${settings.videoHeight}; das kann auf dem A56 mehrere Minuten dauern."
+                    videoFramesDir != null -> "Frames: ${videoFramesDir?.absolutePath}"
+                    else -> "AnimateDiff braucht ein SD1.5-Basismodell und ein Motion-Modul. Beides wird beim ersten Clip geladen."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+        if (mode == ModelType.MUSIC) {
+            Text(
+                "Neuronale Musikmodelle bleiben Katalog; der DSP-Renderer oben ist die bewusst lokale Alternative.",
                 style = MaterialTheme.typography.labelSmall,
                 color = TextMuted,
                 modifier = Modifier.padding(top = 8.dp)
@@ -443,6 +572,49 @@ fun StudioScreen(viewModel: AppViewModel) {
         }
         error?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+        }
+        videoError?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+        }
+
+        var videoView by remember { mutableStateOf<VideoView?>(null) }
+        DisposableEffect(videoResult) {
+            onDispose {
+                videoView?.stopPlayback()
+                videoView = null
+            }
+        }
+        videoResult?.let { video ->
+            Spacer(Modifier.height(14.dp))
+            Surface(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                key(video.absolutePath) {
+                    AndroidView(
+                        factory = { ctx ->
+                            VideoView(ctx).apply {
+                                videoView = this
+                                val controller = MediaController(ctx)
+                                controller.setAnchorView(this)
+                                setMediaController(controller)
+                                setVideoPath(video.absolutePath)
+                                setOnPreparedListener { mp ->
+                                    mp.isLooping = true
+                                    start()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(220.dp)
+                    )
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(video.absolutePath, style = MaterialTheme.typography.labelSmall, color = TextMuted, modifier = Modifier.weight(1f))
+                TextButton(onClick = { openUrl(context, "file://${video.absolutePath}") }) { Text("MP4") }
+                TextButton(onClick = { viewModel.clearVideo() }) { Text("Entfernen") }
+            }
         }
 
         val currentImage = image
@@ -574,6 +746,57 @@ fun StudioScreen(viewModel: AppViewModel) {
                             onClick = { viewModel.updateSettings { it.copy(imageLoraPath = lora.file.absolutePath) } }
                         ) { Text(lora.name, modifier = Modifier.padding(12.dp), maxLines = 1) }
                     }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+
+    if (showMotionModels) {
+        ModalBottomSheet(onDismissRequest = { showMotionModels = false }, containerColor = Surface1) {
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                Text("AnimateDiff-Motion-Modul", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "SD1.5-Motion-Modul, z. B. mm_sd_v15_v2.ckpt. Es wird zusammen mit dem Basismodell geladen.",
+                    style = MaterialTheme.typography.labelSmall, color = TextMuted,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+                )
+                Surface(
+                    color = if (settings.videoMotionPath.isBlank()) AccentSoft else Surface2,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    onClick = {
+                        viewModel.updateSettings { it.copy(videoMotionPath = "") }
+                        showMotionModels = false
+                    }
+                ) { Text("Kein Motion-Modul", modifier = Modifier.padding(14.dp)) }
+                installed.filter {
+                    !it.isLora && (it.name.endsWith(".ckpt", true) ||
+                        it.name.endsWith(".safetensors", true) || it.name.endsWith(".gguf", true)) &&
+                        (it.name.contains("mm_sd", true) || it.name.contains("motion", true) ||
+                            it.name.contains("animatediff", true))
+                }.forEach { model ->
+                    Surface(
+                        color = if (settings.videoMotionPath == model.file.absolutePath) AccentSoft else Surface2,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        onClick = {
+                            viewModel.updateSettings { it.copy(videoMotionPath = model.file.absolutePath) }
+                            showMotionModels = false
+                        }
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(model.name, maxLines = 1, fontWeight = FontWeight.SemiBold)
+                            Text("${model.sizeMb} MB", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                        }
+                    }
+                }
+                if (installed.none { it.name.contains("mm_sd", true) || it.name.contains("motion", true) }) {
+                    Text(
+                        "Noch kein Motion-Modul installiert. mm_sd_v15_v2.ckpt im Modelle-Tab herunterladen.",
+                        style = MaterialTheme.typography.labelSmall, color = TextMuted,
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
+                }
                 Spacer(Modifier.height(24.dp))
             }
         }

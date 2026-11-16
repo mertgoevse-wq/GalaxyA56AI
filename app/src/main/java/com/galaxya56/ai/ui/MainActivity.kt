@@ -62,12 +62,49 @@ class MainActivity : ComponentActivity() {
                             imageSampler = "lcm",
                             imageWidth = 256,
                             imageHeight = 256,
-                            imageSeed = 424242L
+                            imageSeed = 424242L,
+                            npuAutoUpscale = intent.getBooleanExtra("auto_upscale", it.npuAutoUpscale)
                         )
                     }
                     viewModel.generateLocalImage(prompt, "blurry, low quality")
                 }
             }
+        }
+        intent?.getStringExtra("video_test")?.let { prompt ->
+            viewModel.updateSettings {
+                it.copy(
+                    imageModelPath = intent.getStringExtra("image_model") ?: it.imageModelPath,
+                    videoMotionPath = intent.getStringExtra("video_motion") ?: it.videoMotionPath,
+                    videoFrames = intent.getIntExtra("video_frames", 8).coerceIn(8, 16),
+                    videoFps = intent.getIntExtra("video_fps", 8),
+                    videoWidth = intent.getIntExtra("video_width", 256),
+                    videoHeight = intent.getIntExtra("video_height", 256),
+                    videoSteps = intent.getIntExtra("video_steps", 8),
+                    videoCfg = intent.getFloatExtra("video_cfg", 1.5f),
+                    videoSampler = intent.getStringExtra("video_sampler") ?: "lcm",
+                    videoSeed = intent.getLongExtra("video_seed", 424242L),
+                    imageLoraPath = intent.getStringExtra("video_lora") ?: it.imageLoraPath
+                )
+            }
+            viewModel.generateLocalVideo(prompt, "blurry, low quality, watermark")
+        }
+        if (intent?.getBooleanExtra("benchmark_test", false) == true) {
+            viewModel.runGpuLayerBenchmark()
+        }
+        if (intent?.getBooleanExtra("enn_benchmark", false) == true) {
+            viewModel.runEnnBenchmark()
+        }
+        intent?.getStringExtra("chat_test")?.let { prompt ->
+            viewModel.updateSettings {
+                it.copy(gpuLayers = intent.getIntExtra("gpu_layers", it.gpuLayers))
+            }
+            if (intent.getBooleanExtra("force_gpu_failure", false)) {
+                viewModel.forceNextVulkanFailure()
+            }
+            if (intent.getBooleanExtra("fail_cpu_reload", false)) {
+                viewModel.failNextCpuReload()
+            }
+            viewModel.send(prompt)
         }
     }
 }

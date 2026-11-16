@@ -186,12 +186,15 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeEnnUpscale(
 
 JNIEXPORT jstring JNICALL
 Java_com_galaxya56_ai_inference_LocalInference_nativeImageLoad(
-        JNIEnv* env, jobject, jstring path, jint threads, jstring backendMode) {
+        JNIEnv* env, jobject, jstring path, jint threads, jstring backendMode,
+        jstring motionModulePath) {
     const std::string modelPath = jstringToString(env, path);
     const std::string backend = jstringToString(env, backendMode);
-    LOGI("Loading diffusion model %s (threads=%d backend=%s)", modelPath.c_str(), threads, backend.c_str());
+    const std::string motion = jstringToString(env, motionModulePath);
+    LOGI("Loading diffusion model %s (threads=%d backend=%s motion=%s)",
+         modelPath.c_str(), threads, backend.c_str(), motion.c_str());
     return stringToJstring(env,
-        galaxya56::ImageEngine::instance().loadModel(modelPath, threads, backend));
+        galaxya56::ImageEngine::instance().loadModel(modelPath, threads, backend, motion));
 }
 
 JNIEXPORT jstring JNICALL
@@ -240,6 +243,28 @@ Java_com_galaxya56_ai_inference_LocalInference_nativeImageGenerate(
     params.controlCanny = controlCanny == JNI_TRUE;
     params.outputPath = jstringToString(env, outputPath);
     return stringToJstring(env, galaxya56::ImageEngine::instance().generate(params));
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_galaxya56_ai_inference_LocalInference_nativeImageGenerateVideo(
+        JNIEnv* env, jobject, jstring prompt, jstring negativePrompt, jint width, jint height,
+        jint frames, jint fps, jint steps, jfloat cfg, jlong seed, jstring sampler,
+        jstring loraPath, jfloat loraScale, jstring outputDir) {
+    galaxya56::VideoGenParams params;
+    params.prompt = jstringToString(env, prompt);
+    params.negativePrompt = jstringToString(env, negativePrompt);
+    params.width = width;
+    params.height = height;
+    params.frames = frames;
+    params.fps = fps;
+    params.steps = steps;
+    params.cfg = cfg;
+    params.seed = seed;
+    params.sampler = jstringToString(env, sampler);
+    params.loraPath = jstringToString(env, loraPath);
+    params.loraScale = loraScale;
+    params.outputDir = jstringToString(env, outputDir);
+    return stringToJstring(env, galaxya56::ImageEngine::instance().generateVideo(params));
 }
 
 JNIEXPORT void JNICALL

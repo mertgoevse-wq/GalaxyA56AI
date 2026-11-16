@@ -149,8 +149,10 @@ std::string LlamaEngine::loadModel(const std::string& path, int nCtx, int nThrea
         return R"json({"ok":false,"error":"Modelldatei nicht gefunden"})json";
     }
 
-    int gpuDevices = 0;
-    std::string gpuDeviceName;
+    // Keep the probe result across loads: std::call_once must not guard
+    // function-local values that are re-initialized on every call.
+    static int gpuDevices = 0;
+    static std::string gpuDeviceName;
     static std::once_flag once;
     std::call_once(once, [&] {
         llama_log_set(logCallback, nullptr);

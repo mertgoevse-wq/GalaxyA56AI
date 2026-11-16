@@ -96,15 +96,22 @@ Quelle: [ExecuTorch Samsung Exynos Backend](https://docs.pytorch.org/executorch/
 
 | Workload | CPU | GPU (Xclipse 540) | NPU (ENN) | Status auf A56 |
 |---|---|---|---|---|
-| LLM (GGUF, llama.cpp) | ✅ NEON, 4–7 Threads | ✅ Vulkan-Layer-Offload | ❌ kein GGUF-Backend | CPU **10–12 tok/s**, Vulkan **10,3 tok/s** (Qwen2.5-0.5B Q4_K_M) |
+| LLM (GGUF, llama.cpp) | ✅ NEON, 4–7 Threads | ✅ Vulkan-Layer-Offload | ❌ kein GGUF-Backend | CPU **10–12 tok/s**, Vulkan **10,3 tok/s** (Qwen2.5-0.5B Q4_K_M); Benchmark 100 % = **16,4 tok/s** |
 | SD1.5 / LCM Diffusion | ✅ Fallback | ✅ Vulkan/stable-diffusion.cpp | ❌ kein UNet-NNC | **76–80 s** LCM 4 Steps; **107–124 s** SD1.5 8 Steps (512²) |
 | ControlNet (SD1.5) | ✅ Canny/Preprocess | ✅ ControlNet-Graph auf Vulkan | ❌ | **25,1 s** bei 256², 4 Steps, inkl. 1,4-GB-Modellladung |
-| 4× Upscale | ✅ möglich, langsam | ✅ möglich | ✅ **MIDAS über ENN** | **189–259 ms** für 256→1024 |
+| 4× Upscale | ✅ möglich, langsam | ✅ möglich | ✅ **MIDAS über ENN** | **189–259 ms** für 256→1024; Auto-Pfad **243 ms** + 304 ms Load |
 | Musik (DSP) | ✅ PsytranceEngine | – | – | **270 s** WAV, 44,1 kHz Stereo, in wenigen Sekunden gerendert |
 | Neuronale Musik (MusicGen/ACE-Step) | ❌ zu groß/langsam | ⚠️ theoretisch | ❌ kein Runtime-Container | Katalog/Download, keine Runtime |
-| Video (AnimateDiff/Wan) | ❌ zu langsam | ⚠️ experimentell | ❌ | Katalog/Download, keine Runtime in diesem Build |
+| Video (AnimateDiff/Wan) | ⚠️ 8 Frames in 233–339 s | ✅ Vulkan0 (8 Frames, 256²) | ❌ | **8 Frames/4 Steps** + MP4; 16 Frames auf 8 GB nicht zuverlässig (GPU-Stall/LMK) |
 
 Die Tabelle ist bewusst konservativ: „theoretisch“ bedeutet nicht „in der App verfügbar“.
+
+### Gemessene A56-Läufe (November 2026)
+
+- **AnimateDiff / Vulkan:** `mm_sd_v15_v2.ckpt` + DreamShaper8 LCM Q4_0, 256×256, 8 Frames, LCM/4 Steps, Vulkan0: **233,3 s**; ein zweiter Lauf inklusive Modellladen/VAE **339,4 s**. Acht PNG-Frames, MP4 H.264 8 fps, 1,0 s. Der 16-Frame-Lauf blieb nach dem Motion-Load in einem Vulkan-Graph hängen und wurde nach ~1 min vom System mit `LOW_MEMORY` beendet; 16 Frames sind auf 8 GB nicht zuverlässig.
+- **NPU / MIDAS:** Auto-Upscale nach Bildgenerierung 256→1024 in **243 ms**, Load 304 ms; separater Benchmark Load 50 ms, Exec **202 ms**.
+- **GPU-Layer (Qwen2.5-0.5B, 2048 Kontext, 32 Tokens):** 0 % = 1,17 tok/s (kalt); 25/50/75 % = 1,34/1,72/2,55 tok/s (Teil-Offload, Vulkan); 100 %/24 Layer = **16,44 tok/s**. Die 0-%-Zeile ist wegen Kaltstart/Systemlast nicht repräsentativ; die frühere CPU-Messung mit 7 Threads lag bei 10,7 tok/s. Der erste Benchmark-Lauf meldete fälschlich „kein Vulkan-Geraet“; Ursache war eine lokale GPU-Erkennung hinter `std::call_once`, die nach dem ersten Load auf 0 zurückfiel. Nach dem Fix melden 25–100 % korrekt `CPU+Vulkan Samsung Xclipse 540`.
+- **NPU beschleunigt kein LLM/SD-Modell auf dem 1580:** Es gibt keinen öffentlichen NNC-/LiteRT-/ExecuTorch-Pfad für diese Graphen. Die einzige nachweisbare NPU-Beschleunigung ist MIDAS (separate Pipeline-Stufe).
 
 ---
 
@@ -114,7 +121,7 @@ Die Tabelle ist bewusst konservativ: „theoretisch“ bedeutet nicht „in der 
 
 - **llama.cpp** legt ausgewählte Transformer-Layer als Vulkan-Compute-Shader auf die Xclipse 540. Die CPU behält Tokenisierung, KV-Cache-Verwaltung, Sampling und die nicht offloaded Layer. Auf dem A56 ist der Gewinn bei 0,5B klein (10,3 vs. 10,7 tok/s), weil der Flaschenhals Speicherbandbreite und Kernel-Overhead ist, nicht reine Rechenleistung.
 - **stable-diffusion.cpp** führt UNet, VAE und ControlNet auf Vulkan aus. Die CPU liefert Prompt-Encoding, Tensor-Aufbau, Canny-Vorverarbeitung (falls aktiv) und die Datei-/Metadatenlogik.
-- Der **Vulkan-Fallback** ist echt: schlägt das Laden fehl, wird CPU versucht. Schlägt die **Generierung** fehl, lädt die App einmal mit `gpuLayers=0` neu und wiederholt den Job; Teilausgaben werden vorher verworfen, damit nichts doppelt erscheint.
+- Der **Vulkan-Fallback** ist echt: schlägt das Laden fehl, wird CPU versucht. Schlägt die **Generierung** fehl, lädt die App einmal mit `gpuLayers=0` neu und wiederholt den Job; Teilausgaben werden **erst nach erfolgreichem CPU-Reload** verworfen, damit nichts doppelt erscheint. Schlägt der CPU-Reload fehl, bleibt die bisherige Teilausgabe sichtbar und wird nur um die Fehlermeldung ergänzt.
 
 ### CPU beschleunigt GPU-Workloads
 

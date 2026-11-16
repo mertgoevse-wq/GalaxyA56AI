@@ -37,7 +37,7 @@ Hinweis: Abliterated-Modelle entfernen die eingebaute Verweigerungshaltung, nich
 Verantwortung. Illegale Inhalte bleiben ausgeschlossen. Die App zeigt NSFW-Modelle erst
 nach der 18+-Bestätigung in den Optionen.
 
-## Bildmodelle (Katalog + Download; Runtime offen)
+## Bildmodelle (Runtime läuft für SD1.5; größere Modelle nur Katalog)
 
 | Modell | Basis | Größe | Link |
 |---|---|---|---|
@@ -50,22 +50,39 @@ nach der 18+-Bestätigung in den Optionen.
 Für 8 GB RAM ist SD 1.5 (512×512, 20–30 Schritte) der einzige realistische Kandidat.
 SDXL/Flux sprengen den Speicher.
 
-## Video (Runtime in diesem Build noch nicht verdrahtet)
+## Video (AnimateDiff-Runtime läuft; Grenzen siehe [`VIDEO_RUNTIME.md`](VIDEO_RUNTIME.md))
 
 | Modell | Typ | Größe | Link |
 |---|---|---|---|
-| AnimateDiff Motion Adapter v1.5.2 | SD-1.5-Erweiterung, 16 Frames | ~1.7 GB | [HF](https://huggingface.co/guoyww/animatediff) |
+| AnimateDiff Motion Adapter v1.5.2 | SD-1.5-Erweiterung, 16 Frames | ~1,6–1,7 GB | [HF](https://huggingface.co/guoyww/animatediff) |
+| Wan 2.1 T2V 1.3B | Text-to-Video, 16–33 Frames | ~2,5 GB (Q4) + Textencoder/VAE | [HF](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B) |
 | Stable Video Diffusion XT | Image-to-Video | ~9.6 GB | [HF](https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt) |
+
+**A56-Messung:** AnimateDiff + DreamShaper8 LCM Q4_0, 256×256, 8 Frames, LCM/4 Steps,
+Vulkan0: **233–339 s** und ein gültiges H.264-MP4 (8 fps, 1,0 s). **16 Frames** bei 256²
+blieben nach dem Motion-Load in einem Vulkan-Graph hängen und wurden vom System mit
+`LOW_MEMORY` beendet; sie sind auf 8 GB RAM nicht zuverlässig. Wan 1.3B wurde **nicht**
+getestet, weil es zusätzlich einen separaten Textencoder/VAE benötigt und der
+Speicherbedarf über dem verifizierten AnimateDiff-Pfad liegt. SVD XT (~9,6 GB) passt
+schon als Datei nicht sinnvoll in den verfügbaren Speicher.
 
 ## Musik & Audio (neuronale Runtime offen; lokaler Psytrance-DSP läuft)
 
 | Modell | Aufgabe | Größe | Link |
 |---|---|---|---|
-| MusicGen Small | Text → Musik, 30 s | ~1.2 GB | [HF](https://huggingface.co/facebook/musicgen-small) |
-| Stable Audio Open Small | Text → Loops/SFX, 11 s | ~1.4 GB | [HF](https://huggingface.co/stabilityai/stable-audio-open-small) |
+| MusicGen Small | Text → Musik, 30 s | ~1,2 GB | [HF](https://huggingface.co/facebook/musicgen-small) |
+| ACE-Step | Text → Musik, ~4 min | ~7 GB (3,5B) | [HF](https://huggingface.co/ace-step/ACE-Step) |
+| Stable Audio Open Small | Text → Loops/SFX, 11 s | ~1,4 GB | [HF](https://huggingface.co/stabilityai/stable-audio-open-small) |
 | Whisper Tiny (ggml) | ASR | 75 MB | [HF](https://huggingface.co/ggerganov/whisper.cpp) |
 | Bark Small | TTS + SFX | ~400 MB | [HF](https://huggingface.co/suno/bark) |
 | MeloTTS | TTS mehrsprachig | ~200 MB | [HF](https://huggingface.co/myshell-ai/MeloTTS) |
+
+**MusicGen/ACE-Step auf dem A56:** Beide sind **nicht** getestet, weil in diesem Build
+keine PyTorch-/ONNX-/GGML-Audio-Runtime enthalten ist; der Katalog kann sie nur
+herunterladen. MusicGen Small (~1,2 GB) wäre nach einem Runtime-Port der kleinste
+Kandidat für 5–10 s, ACE-Step (~7 GB, 3,5B) sprengt die 8-GB-Reserve bereits vor dem
+KV-/Audio-Puffer. Der lokale **PsytranceEngine** ist kein neuronales Modell, sondern
+ein deterministischer DSP-Renderer und in der UI entsprechend gekennzeichnet.
 
 ## LoRA-Adapter
 
