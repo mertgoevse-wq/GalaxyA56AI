@@ -96,7 +96,12 @@ class MainActivity : ComponentActivity() {
         }
         intent?.getStringExtra("chat_test")?.let { prompt ->
             viewModel.updateSettings {
-                it.copy(gpuLayers = intent.getIntExtra("gpu_layers", it.gpuLayers))
+                it.copy(
+                    gpuLayers = intent.getIntExtra("gpu_layers", it.gpuLayers),
+                    selectedModelPath = intent.getStringExtra("model_path") ?: it.selectedModelPath,
+                    maxTokens = intent.getIntExtra("max_tokens", it.maxTokens),
+                    contextSize = intent.getIntExtra("context_size", it.contextSize)
+                )
             }
             if (intent.getBooleanExtra("force_gpu_failure", false)) {
                 viewModel.forceNextVulkanFailure()
